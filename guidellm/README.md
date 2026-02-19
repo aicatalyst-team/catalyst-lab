@@ -106,7 +106,11 @@ If your KServe endpoint requires authentication, pass the token via `--backend-k
 
 ### Llama Stack with vLLM
 
-If Llama Stack is configured with vLLM as the inference provider, point GuideLLM at the vLLM server that Llama Stack uses (not at Llama Stack's own API, since Llama Stack's API is not OpenAI-compatible by default). Alternatively, if your Llama Stack deployment exposes an OpenAI-compatible proxy, use that URL.
+Llama Stack with vLLM as the inference provider exposes an OpenAI-compatible `/v1/chat/completions` endpoint directly. Point GuideLLM's `--target` at the Llama Stack service URL — no separate vLLM endpoint is needed.
+
+```bash
+--target "http://llamastack.<namespace>.svc.cluster.local:8321"
+```
 
 ## Running Benchmarks
 
@@ -401,29 +405,91 @@ This gives you raw service-to-service performance without ingress controller or 
 
 If your cluster uses NetworkPolicies, ensure the benchmark pod namespace can reach the model-serving namespace on the vLLM port (typically 8080 or 8000).
 
-## Example: Full Benchmark Against KServe + vLLM
+## Deploying the Benchmark on Kubernetes
+
+This section walks through running GuideLLM as a Kubernetes Job against a Llama Stack inference endpoint in the `labdemo` namespace.
+
+**Target endpoint:** `http://<inference-endpoint>:<port>`
+**Model:** `<model-name>`
+
+### Step 1: Create namespace and PVC
 
 ```bash
-# 1. Get the inference endpoint
-export ISVC_URL=$(kubectl get inferenceservice my-llama-model -n my-namespace \
-  -o jsonpath='{.status.url}')
+kubectl apply -f guidellm/namespace.yaml
+kubectl apply -f guidellm/pvc.yaml
+```
 
-# 2. Run a sweep benchmark with saturation detection
-guidellm benchmark \
-  --target "${ISVC_URL}" \
-  --model "meta-llama/Llama-3.1-8B-Instruct" \
-  --data "prompt_tokens=512,output_tokens=256" \
-  --profile sweep \
-  --rate 12 \
-  --detect-saturation \
-  --max-seconds 180 \
-  --output-dir ./benchmark-results \
-  --outputs json,csv,html
+### Step 2: Verify the endpoint is reachable
 
-# 3. View results
-# Open ./benchmark-results/benchmarks.html in a browser
-# Or inspect the CSV:
-# cat ./benchmark-results/benchmarks.csv
+Run a quick curl pod inside the cluster to confirm the model is served:
+
+```bash
+kubectl run curl-test --rm -it --image=curlimages/curl --restart=Never -n guide-llm -- \
+  curl -s http://<inference-endpoint>:<port>/v1/models
+```
+
+You should see a JSON response listing `<model-name>`.
+
+### Step 3: Run the benchmark Job
+
+```bash
+kubectl apply -f guidellm/benchmark-job.yaml
+```
+
+### Step 4: Monitor progress
+
+```bash
+kubectl logs -f job/guidellm-benchmark -n guide-llm
+```
+
+### Step 5: Retrieve results from the PVC
+
+After the job completes, use a helper pod to copy results locally:
+
+```bash
+# Launch a helper pod that mounts the PVC
+kubectl run results-reader --rm -it \
+  --image=busybox \
+  --restart=Never \
+  -n guide-llm \
+  --overrides='{
+    "spec": {
+      "containers": [{
+        "name": "reader",
+        "image": "busybox",
+        "command": ["sh"],
+        "stdin": true,
+        "tty": true,
+        "volumeMounts": [{
+          "name": "results",
+          "mountPath": "/results"
+        }]
+      }],
+      "volumes": [{
+        "name": "results",
+        "persistentVolumeClaim": {
+          "claimName": "benchmark-results-pvc"
+        }
+      }]
+    }
+  }'
+
+# Inside the pod, list the results:
+ls /results/
+
+# Or copy results out (from a separate terminal):
+kubectl cp guidellm/results-reader:/results ./local-results
+```
+
+The PVC will contain `benchmarks.json`, `benchmarks.csv`, and `benchmarks.html`.
+
+### Cleanup
+
+```bash
+kubectl delete job guidellm-benchmark -n guide-llm
+# Optionally delete the PVC and namespace:
+kubectl delete pvc benchmark-results-pvc -n guide-llm
+kubectl delete namespace guidellm
 ```
 
 ## Environment Variables

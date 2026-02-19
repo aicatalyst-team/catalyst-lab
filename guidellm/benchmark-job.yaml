@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: guidellm-benchmark
+  namespace: guide-llm
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: guidellm
+          image: ghcr.io/vllm-project/guidellm:latest
+          args:
+            - "benchmark"
+            - "run"
+            - "--target"
+            - "http://<inference-endpoint>:<port>"
+            - "--model"
+            - "<model-name>"
+            - "--data"
+            - "prompt_tokens=512,output_tokens=256"
+            - "--profile"
+            - "sweep"
+            - "--detect-saturation"
+            - "--max-seconds"
+            - "180"
+            - "--output-dir"
+            - "/results"
+            - "--outputs"
+            - "json,csv,html"
+            - "--processor"
+            - "<hf-model-id>"
+            - "--backend-kwargs"
+            - '{"validate_backend": false}'
+          volumeMounts:
+            - name: results
+              mountPath: /results
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: benchmark-results-pvc
