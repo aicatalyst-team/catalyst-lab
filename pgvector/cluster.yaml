@@ -2,7 +2,7 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: pgvector-cluster
-  namespace: pgvector
+  namespace: catalystlab-shared
 spec:
   instances: 1
 

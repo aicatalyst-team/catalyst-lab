@@ -3,7 +3,7 @@
 Deploy PostgreSQL 17 with the [pgvector](https://github.com/pgvector/pgvector) extension on Kubernetes using the [CloudNativePG](https://cloudnative-pg.io/) operator.
 
 **Target node:** `worker-gpu2`
-**Namespace:** `pgvector`
+**Namespace:** `catalystlab-shared`
 
 ## Prerequisites
 
@@ -41,10 +41,10 @@ NAME                    READY   STATUS    RESTARTS   AGE
 cnpg-cloudnative-pg-*   1/1     Running   0          ...
 ```
 
-### 2. Create the pgvector namespace
+### 2. Create the namespace
 
 ```bash
-kubectl create namespace pgvector
+kubectl create namespace catalystlab-shared
 ```
 
 ### 3. Deploy the PostgreSQL cluster
@@ -58,7 +58,7 @@ kubectl apply -f cluster.yaml
 Check cluster status:
 
 ```bash
-kubectl get cluster -n pgvector
+kubectl get cluster -n catalystlab-shared
 ```
 
 Expected output shows `Cluster in healthy state`:
@@ -71,13 +71,13 @@ pgvector-cluster   ..s   1           1       Cluster in healthy state   pgvector
 Check the pod is running on `worker-gpu2`:
 
 ```bash
-kubectl get pods -n pgvector -o wide
+kubectl get pods -n catalystlab-shared -o wide
 ```
 
 Verify pgvector extension is loaded:
 
 ```bash
-kubectl exec -n pgvector pgvector-cluster-1 -- \
+kubectl exec -n catalystlab-shared pgvector-cluster-1 -- \
   psql -U vectordb -d vectordb \
   -c "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';"
 ```
@@ -98,11 +98,11 @@ The operator auto-generates credentials and stores them in a Kubernetes Secret:
 
 ```bash
 # Get the password
-kubectl get secret pgvector-cluster-app -n pgvector \
+kubectl get secret pgvector-cluster-app -n catalystlab-shared \
   -o jsonpath='{.data.password}' | base64 -d && echo
 
 # Get the full connection URI
-kubectl get secret pgvector-cluster-app -n pgvector \
+kubectl get secret pgvector-cluster-app -n catalystlab-shared \
   -o jsonpath='{.data.uri}' | base64 -d && echo
 ```
 
@@ -110,7 +110,7 @@ kubectl get secret pgvector-cluster-app -n pgvector \
 
 | Parameter | Value |
 |-----------|-------|
-| Host      | `pgvector-cluster-rw.pgvector.svc` |
+| Host      | `pgvector-cluster-rw.catalystlab-shared.svc` |
 | Port      | `5432` |
 | Database  | `vectordb` |
 | User      | `vectordb` |
@@ -118,14 +118,14 @@ kubectl get secret pgvector-cluster-app -n pgvector \
 ### Interactive psql session
 
 ```bash
-kubectl exec -it -n pgvector pgvector-cluster-1 -- \
+kubectl exec -it -n catalystlab-shared pgvector-cluster-1 -- \
   psql -U vectordb -d vectordb
 ```
 
 ### Port-forward for local access
 
 ```bash
-kubectl port-forward -n pgvector svc/pgvector-cluster-rw 5432:5432
+kubectl port-forward -n catalystlab-shared svc/pgvector-cluster-rw 5432:5432
 ```
 
 Then connect locally:
@@ -181,8 +181,8 @@ The cluster is configured in `cluster.yaml` with the following settings:
 Remove the PostgreSQL cluster:
 
 ```bash
-kubectl delete cluster pgvector-cluster -n pgvector
-kubectl delete namespace pgvector
+kubectl delete cluster pgvector-cluster -n catalystlab-shared
+kubectl delete namespace catalystlab-shared
 ```
 
 Remove the CloudNativePG operator:
