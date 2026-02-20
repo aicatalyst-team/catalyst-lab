@@ -177,17 +177,303 @@ kubectl exec -n catalystlab-shared pgvector-cluster-1 -- \
   psql -U postgres -c '\l' | grep mlflow
 ```
 
-## Next Steps
+## Deployment
 
-1. Create the `mlflow` database (see above)
-2. Deploy MLflow PVC for artifact storage
-3. Deploy MLflow Deployment with PostgreSQL backend
-4. Deploy MLflow Service (ClusterIP)
-5. Deploy MLflow Ingress with nginx annotations
-6. Verify MLflow is accessible via ingress
-7. Create initial experiment for trace collection
-8. Deploy OTel Collector with experiment ID
-9. Configure LLaMA Stack to send traces (if not already configured)
+### Step 1: Deploy PVC for Artifacts
+
+```bash
+kubectl apply -f pvc.yaml
+```
+
+Verify the PVC was created:
+
+```bash
+kubectl get pvc -n catalystlab-shared mlflow-artifacts-pvc
+```
+
+Expected status: `Pending` (will bind when pod is created)
+
+### Step 2: Deploy MLflow Deployment
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+Monitor the deployment:
+
+```bash
+kubectl get pods -n catalystlab-shared -l app=mlflow -w
+```
+
+Wait for the pod to reach `Running` status.
+
+Check logs for any errors:
+
+```bash
+kubectl logs -n catalystlab-shared -l app=mlflow --tail=50
+```
+
+### Step 3: Deploy MLflow Service
+
+```bash
+kubectl apply -f service.yaml
+```
+
+Verify the service:
+
+```bash
+kubectl get svc -n catalystlab-shared mlflow
+```
+
+Expected output:
+```
+NAME     TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+mlflow   ClusterIP   10.x.x.x       <none>        5000/TCP   ...
+```
+
+### Step 4: Deploy MLflow Ingress
+
+```bash
+kubectl apply -f ingress.yaml
+```
+
+Verify the ingress:
+
+```bash
+kubectl get ingress -n catalystlab-shared mlflow
+```
+
+Expected output should show the hostname `mlflow.159.253.136.11.nip.io`.
+
+## Verification
+
+### 1. Health Check (Basic)
+
+**Note:** The `/health` endpoint passes even with broken `--allowed-hosts`, so don't rely on this alone.
+
+```bash
+curl http://mlflow.159.253.136.11.nip.io/health
+```
+
+Expected: `OK`
+
+### 2. API Access Test (Real Verification)
+
+This is the **real test** — it will return 403 if `--allowed-hosts` is configured incorrectly:
+
+```bash
+curl -X POST http://mlflow.159.253.136.11.nip.io/api/2.0/mlflow/experiments/search \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
+Expected: JSON response with empty experiments list (NOT 403)
+
+```json
+{"experiments": []}
+```
+
+If you get `403 Forbidden` with "DNS rebinding" error, check the `--allowed-hosts` configuration in [deployment.yaml](deployment.yaml).
+
+### 3. Access MLflow UI
+
+Open in browser:
+
+```
+http://mlflow.159.253.136.11.nip.io
+```
+
+You should see the MLflow UI with no experiments yet.
+
+## Post-Deployment: OTel Trace Collection
+
+After MLflow is running and verified, set up trace collection:
+
+### 1. Create Initial Experiment
+
+Create an experiment for LLaMA Stack traces:
+
+```bash
+curl -X POST http://mlflow.159.253.136.11.nip.io/api/2.0/mlflow/experiments/create \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "llamastack-traces"}'
+```
+
+**Capture the experiment ID from the response:**
+
+```json
+{"experiment_id": "1"}
+```
+
+### 2. Update OTel Collector Config
+
+Edit [otel-collector-config.yaml](otel-collector-config.yaml) and replace the placeholder experiment ID:
+
+```yaml
+headers:
+  x-mlflow-experiment-id: "1"  # Replace with actual ID from step 1
+```
+
+### 3. Deploy OTel Collector
+
+```bash
+kubectl apply -f otel-collector-config.yaml
+kubectl apply -f otel-collector.yaml
+```
+
+Verify the OTel Collector is running:
+
+```bash
+kubectl get pods -n catalystlab-shared -l app=otel-collector
+```
+
+Check logs:
+
+```bash
+kubectl logs -n catalystlab-shared -l app=otel-collector --tail=50
+```
+
+### 4. Verify LLaMA Stack OTel Configuration
+
+Check that LLaMA Stack is configured to send traces to the OTel Collector:
+
+```bash
+kubectl get deployment llamastack -n catalystlab-shared -o yaml | grep OTEL
+```
+
+Expected environment variable:
+```yaml
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.catalystlab-shared.svc.cluster.local:4317
+```
+
+If not configured, update the LLaMA Stack deployment to include this environment variable.
+
+### 5. Verify Traces are Landing
+
+Trigger some inference requests through LLaMA Stack, then check the MLflow UI:
+
+1. Go to: `http://mlflow.159.253.136.11.nip.io`
+2. Click on **Experiments** → **llamastack-traces**
+3. Click on the **Traces** tab
+4. You should see traces appearing with span details
+
+## Troubleshooting
+
+### Pod Not Starting
+
+Check pod events:
+
+```bash
+kubectl describe pod -n catalystlab-shared -l app=mlflow
+```
+
+Common issues:
+- PVC not binding (check storage provisioner)
+- Secret not found (verify `pgvector-cluster-app` exists)
+- Image pull errors (check network/registry access)
+
+### Database Connection Errors
+
+Check logs for PostgreSQL connection errors:
+
+```bash
+kubectl logs -n catalystlab-shared -l app=mlflow | grep -i postgres
+```
+
+Verify the database exists:
+
+```bash
+kubectl exec -n catalystlab-shared pgvector-cluster-1 -- \
+  psql -U postgres -c '\l' | grep mlflow
+```
+
+### 403 DNS Rebinding Errors
+
+If API calls return 403 with "DNS rebinding" error, verify `--allowed-hosts` includes all required variants:
+
+```bash
+kubectl get deployment mlflow -n catalystlab-shared -o yaml | grep allowed-hosts
+```
+
+Should include:
+```
+--allowed-hosts=mlflow.159.253.136.11.nip.io,mlflow.catalystlab-shared.svc.cluster.local,mlflow.catalystlab-shared.svc.cluster.local:5000,localhost,localhost:5000
+```
+
+### Gateway API Errors
+
+If you see store initialization errors in logs, verify `MLFLOW_TRACKING_URI` environment variable is set:
+
+```bash
+kubectl get deployment mlflow -n catalystlab-shared -o yaml | grep MLFLOW_TRACKING_URI
+```
+
+Should be set to the same value as `--backend-store-uri`.
+
+### Traces Not Appearing
+
+Check OTel Collector logs:
+
+```bash
+kubectl logs -n catalystlab-shared -l app=otel-collector
+```
+
+Verify the collector can reach MLflow:
+
+```bash
+kubectl exec -n catalystlab-shared -l app=otel-collector -- \
+  wget -qO- http://mlflow.catalystlab-shared.svc.cluster.local:5000/health
+```
+
+Check that LLaMA Stack is sending traces:
+
+```bash
+kubectl logs -n catalystlab-shared -l app=llamastack | grep -i otel
+```
+
+## Critical Configuration Notes
+
+### 1. DNS Rebinding Protection
+
+MLflow 3.x uses `fnmatch` for DNS rebinding protection and **does not strip ports** from the Host header. You must include both hostname and hostname:port variants in `--allowed-hosts`.
+
+**Incorrect:**
+```
+--allowed-hosts=mlflow.catalystlab-shared.svc.cluster.local
+```
+
+**Correct:**
+```
+--allowed-hosts=mlflow.catalystlab-shared.svc.cluster.local,mlflow.catalystlab-shared.svc.cluster.local:5000
+```
+
+### 2. MLFLOW_TRACKING_URI Environment Variable
+
+MLflow 3.x has a bug where FastAPI gateway workers resolve the tracking store from the `MLFLOW_TRACKING_URI` environment variable, **NOT** from the `--backend-store-uri` CLI flag.
+
+Always set both:
+```yaml
+command:
+  - --backend-store-uri=postgresql://...
+env:
+  - name: MLFLOW_TRACKING_URI
+    value: "postgresql://..."
+```
+
+### 3. Trace Endpoint
+
+Use `/v1/traces` for OTLP ingestion, **NOT** `/api/2.0/mlflow/traces`.
+
+The OTel Collector's `otlphttp` exporter automatically appends `/v1/traces` to the endpoint URL.
+
+### 4. Experiment ID Bootstrap
+
+The OTel Collector requires an experiment ID before it can forward traces. This creates a bootstrap sequence:
+
+1. Deploy MLflow
+2. Create experiment via API
+3. Get experiment ID
+4. Update OTel Collector config with ID
+5. Deploy OTel Collector
 
 ## Architecture
 
