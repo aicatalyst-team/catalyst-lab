@@ -12,11 +12,11 @@ Catalyst Lab is a comprehensive Kubernetes-based platform for deploying, operati
 graph LR
     Users[👥 Users] --> Frontend[🎨 WebUI]
     Frontend --> Agents[🤖 AI Agents<br/>Kagenti/BeeAI]
-    Agents --> LLM[🚀 LLM Inference<br/>LLAMA-STACK + vLLM]
+    Agents --> LLM[🚀 LLM Inference<br/>LLAMA-STACK + KServe<br/>llm-d + vLLM]
     LLM --> MCP[🔌 MCP Gateway<br/>GitHub/Jira/Search]
     LLM --> Storage[💾 Storage<br/>PgVector + PostgreSQL]
     LLM --> Obs[📊 Observability<br/>MLFlow + Grafana]
-    
+
     style Users fill:#fff,stroke:#333,stroke-width:2px
     style Frontend fill:#fff,stroke:#333
     style Agents fill:#ffd700,stroke:#333,stroke-width:2px
@@ -25,6 +25,145 @@ graph LR
     style Storage fill:#fff,stroke:#333
     style Obs fill:#FF6B6B,stroke:#333
 ```
+
+## Stack Architecture - Building Blocks
+
+The Catalyst Lab platform is built on a complete open-source stack, from hardware to application layer:
+
+```mermaid
+graph TB
+    %% Application Layer
+    subgraph AppLayer["🎯 Application Layer - AI Catalyst Platform"]
+        App1["GuideLLM<br/>Benchmarking"]
+        App2["Open WebUI<br/>Inference UI"]
+    end
+
+    %% Inference Stack
+    subgraph InfStack["🚀 Inference Stack"]
+        Inf1["Envoy Gateway<br/>API Gateway"]
+        Inf2["KServe<br/>Model Serving"]
+        Inf3["llm-d Scheduler"]
+        Inf4["vLLM + Models"]
+        Inf5["vLLM Production<br/>LMCache + vLLM"]
+    end
+
+    %% Observability
+    subgraph ObsStack["📊 Observability & Monitoring"]
+        Obs1["Grafana"]
+        Obs2["Prometheus"]
+        Obs3["OpenEBS"]
+        Obs4["DCGM Exporter"]
+        Obs5["MIG Manager"]
+        Obs6["Nvidia Operator"]
+    end
+
+    %% Kubernetes Layer
+    subgraph K8sStack["☸️ Kubernetes Layer - Upstream Open Source"]
+        K8s1["Kubernetes<br/>Control Plane"]
+        K8s2["Kubernetes<br/>Worker Nodes"]
+        K8s3["Persistent<br/>Volumes"]
+        K8s4["Nvidia Container<br/>Toolkit"]
+    end
+
+    %% Infrastructure Layers (Horizontal)
+    subgraph InfraLayers["Infrastructure Layers"]
+        subgraph StorStack["💾 Storage Stack"]
+            Stor1["Logical Volume<br/>Manager"]
+            Stor2["Disk Storage ++"]
+        end
+
+        subgraph GPUStack["🎮 GPU Stack"]
+            GPU1["Nvidia Driver"]
+            GPU2["Nvidia GPU ++<br/>A100 x8"]
+        end
+
+        subgraph OSStack["🐧 Operating System"]
+            OS1["Kernel Modules"]
+            OS2["Permissions"]
+            OS3["CentOS 9 Stream"]
+        end
+    end
+
+    %% Hardware Layer
+    subgraph HWLayer["⚙️ Hardware Layer"]
+        HW1["CPU ++"]
+        HW2["RAM ++"]
+        HW3["Disk ++"]
+        HW4["Nvidia GPU ++"]
+    end
+
+    %% Connections - Vertical flow
+    AppLayer --> InfStack
+    InfStack --> ObsStack
+    ObsStack --> K8sStack
+    K8sStack --> InfraLayers
+    InfraLayers --> HWLayer
+
+    %% Styling
+    classDef appStyle fill:#4A90E2,stroke:#2E5C8A,stroke-width:3px,color:#fff
+    classDef infStyle fill:#FFE066,stroke:#CC9900,stroke-width:3px,color:#000
+    classDef obsStyle fill:#90EE90,stroke:#2D7A2D,stroke-width:2px,color:#000
+    classDef k8sStyle fill:#326CE5,stroke:#1A4D91,stroke-width:3px,color:#fff
+    classDef storStyle fill:#E8E8E8,stroke:#666,stroke-width:2px,color:#000
+    classDef gpuStyle fill:#76B900,stroke:#4A7300,stroke-width:3px,color:#fff
+    classDef osStyle fill:#F0F0F0,stroke:#999,stroke-width:2px,color:#000
+    classDef hwStyle fill:#D3D3D3,stroke:#888,stroke-width:2px,color:#000
+
+    class App1,App2 appStyle
+    class Inf1,Inf2,Inf3,Inf4,Inf5 infStyle
+    class Obs1,Obs2,Obs3,Obs4,Obs5,Obs6 obsStyle
+    class K8s1,K8s2,K8s3,K8s4 k8sStyle
+    class Stor1,Stor2 storStyle
+    class GPU1,GPU2 gpuStyle
+    class OS1,OS2,OS3 osStyle
+    class HW1,HW2,HW3,HW4 hwStyle
+```
+
+### Layer Descriptions
+
+#### 🎯 Application Layer
+- **GuideLLM**: Performance benchmarking tool for LLM inference endpoints
+- **Open WebUI**: User-friendly web interface for LLM interactions
+
+#### 🚀 Inference Stack
+- **Envoy Gateway**: API gateway for routing and load balancing
+- **KServe**: Kubernetes-native model serving platform
+- **llm-d**: Custom scheduler for optimized LLM workload distribution
+- **vLLM**: High-performance inference engine with model serving
+- **vLLM Production**: Production deployment with LMCache for improved performance
+
+#### 📊 Observability & Monitoring
+- **Grafana**: Visualization and monitoring dashboards
+- **Prometheus**: Metrics collection and alerting
+- **OpenEBS**: Container-attached storage for Kubernetes
+- **DCGM Exporter**: Nvidia GPU metrics exporter
+- **MIG Manager**: Multi-Instance GPU management
+- **Nvidia Operator**: GPU operator for Kubernetes
+
+#### ☸️ Kubernetes Layer
+- **Control Plane**: Kubernetes cluster management
+- **Worker Nodes**: Compute nodes for workload execution
+- **Persistent Volumes**: Storage abstraction layer
+- **Nvidia Container Toolkit**: GPU container runtime integration
+
+#### 💾 Storage Stack
+- **Logical Volume Manager**: Flexible disk management
+- **Disk Storage**: High-capacity storage infrastructure
+
+#### 🎮 GPU Stack
+- **Nvidia Driver**: GPU driver for compute acceleration
+- **GPU Hardware**: Nvidia A100 GPUs (8x) for inference
+
+#### 🐧 Operating System
+- **Kernel Modules**: System extensions and drivers
+- **Permissions**: Security and access control
+- **CentOS 9 Stream**: Base operating system
+
+#### ⚙️ Hardware Layer
+- **CPU**: Multi-core processors for compute
+- **RAM**: High-capacity memory
+- **Disk**: NVMe/SSD storage devices
+- **GPU**: Nvidia A100 accelerators
 
 ## Core Capabilities
 
