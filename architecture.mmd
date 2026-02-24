@@ -1,115 +1,122 @@
-graph TB
-    subgraph External["External Services"]
-        Jira[Jira]
-        Github[Github]
-        BraveSearch[Brave Search]
+graph LR
+    %% Users
+    User(["👤 User"])
+    Admin(["👨‍💼 Administrator"])
+
+    %% Frontend Layer
+    subgraph Frontend["🎨 Frontend Layer"]
+        WebUI["WebUI<br/>Llama-Stack Client"]
     end
 
-    subgraph KubernetesLab["Kubernetes Lab"]
-        User((User))
-        Admin((Administrator))
-        
-        subgraph Frontend["Frontend"]
-            WebUI[WebUI<br/>LLama-Stack<br/>client]
-        end
-        
-        subgraph Orchestration["Orchestration & Agents"]
-            Kagenti[Kagenti]
-            BeeAI[BeeAI Agent<br/>Kagenti CRD<br/>A2A :9999]
-        end
-        
-        subgraph Storage["Storage Layer"]
-            PgVector[Vector Storage<br/>PgVector]
-            Posgresql[Posgresql]
-        end
-        
-        subgraph LLMInference["LLM Inference"]
-            LlamaStack[LLAMA-STACK<br/>Server]
-            KServe[KServe]
-            LlmdScheduler[llm-d<br/>scheduler]
-            LlmdVLLM[llm-d<br/>vLLM]
-        end
-        
-        subgraph MCPServers["MCP Servers"]
-            KuadrantMCP[Kuadrant<br/>mcp-gateway]
-            GitHubMCP[GitHub<br/>MCP server]
-            JiraMCP[Jira<br/>MCP server]
-            SearchMCP[Search<br/>MCP Server]
-            BenchmarkMCP[Benchmark<br/>MCP Server]
-        end
-        
-        subgraph Observability["Observability & Monitoring"]
-            MLFlow[MLFlow<br/>LLM Traces]
-            VisualMLFlow[Visual For MLFlow<br/>TBD]
-            GrafanaDash[Grafana<br/>Dashboard]
-            OtelPrometheus[Observability<br/>OTel+Prometheus]
-        end
-        
-        subgraph Benchmarking["Benchmarking"]
-            AgenticBench[Agentic Benchmark:<br/>TravelPlanner/VendingBench]
-        end
+    %% Orchestration Layer
+    subgraph Orchestration["🤖 Orchestration & Agents"]
+        direction TB
+        Kagenti["Kagenti<br/>K8s Agent Orchestrator"]
+        BeeAI["BeeAI Agent<br/>Kagenti CRD<br/>A2A Port: 9999"]
+        AgenticBench["Agentic Benchmark<br/>TravelPlanner<br/>VendingBench"]
     end
 
-    %% User interactions
-    User <--> WebUI
-    User --> AgenticBench
-    Admin <--> GrafanaDash
-    
-    %% Frontend connections
-    WebUI <--> LlamaStack
-    
-    %% Orchestration flow
-    Kagenti --> BeeAI
-    Kagenti --> VisualMLFlow
-    BeeAI --> LlamaStack
-    AgenticBench --> Kagenti
-    
-    %% LLM Inference flow
-    LlamaStack --> PgVector
-    LlamaStack --> Posgresql
-    LlamaStack --> KServe
-    KServe --> LlmdScheduler
-    KServe --> LlmdVLLM
-    LlmdScheduler --> LlmdVLLM
-    
-    %% MCP Gateway connections
-    LlamaStack --> KuadrantMCP
-    KuadrantMCP <--> GitHubMCP
-    KuadrantMCP <--> JiraMCP
-    KuadrantMCP <--> SearchMCP
-    KuadrantMCP <--> BenchmarkMCP
-    
-    %% External service connections
-    GitHubMCP <--> Github
-    JiraMCP <--> Jira
-    SearchMCP <--> BraveSearch
-    
-    %% Observability connections
-    VisualMLFlow --> MLFlow
-    MLFlow --> Posgresql
-    MLFlow --> LlamaStack
-    OtelPrometheus --> LlamaStack
-    OtelPrometheus --> KServe
-    GrafanaDash --> OtelPrometheus
-    Kagenti --> MLFlow
-    
-    %% Styling
-    classDef userStyle fill:#fff,stroke:#333,stroke-width:2px
-    classDef frontendStyle fill:#fff,stroke:#333,stroke-width:1px
-    classDef orchestrationStyle fill:#ffd700,stroke:#333,stroke-width:2px
-    classDef inferenceStyle fill:#90EE90,stroke:#333,stroke-width:1px
-    classDef storageStyle fill:#fff,stroke:#333,stroke-width:1px
-    classDef mcpStyle fill:#E6E6FA,stroke:#333,stroke-width:1px
-    classDef observabilityStyle fill:#FF6B6B,stroke:#333,stroke-width:2px
-    classDef externalStyle fill:#fff,stroke:#333,stroke-width:1px
-    classDef benchStyle fill:#fff,stroke:#333,stroke-width:1px
-    
+    %% LLM Inference Layer
+    subgraph LLMInference["🚀 LLM Inference Stack"]
+        direction TB
+        LlamaStack["LLAMA-STACK Server<br/>Main Orchestrator"]
+        KServe["KServe<br/>Model Serving Platform"]
+        LlmdScheduler["llm-d Scheduler<br/>Workload Manager"]
+        LlmdVLLM["llm-d vLLM<br/>Inference Engine"]
+    end
+
+    %% MCP Integration Layer
+    subgraph MCPServers["🔌 MCP Integration Layer"]
+        direction TB
+        KuadrantMCP["Kuadrant Gateway<br/>MCP Router"]
+        GitHubMCP["GitHub MCP<br/>Source Control"]
+        JiraMCP["Jira MCP<br/>Project Mgmt"]
+        SearchMCP["Search MCP<br/>Web Search"]
+        BenchmarkMCP["Benchmark MCP<br/>Performance"]
+    end
+
+    %% Storage Layer
+    subgraph Storage["💾 Data Storage Layer"]
+        direction TB
+        PgVector["PgVector<br/>Vector Embeddings<br/>HNSW Index"]
+        Posgresql["PostgreSQL 17<br/>Primary Database<br/>CloudNativePG"]
+    end
+
+    %% Observability Layer
+    subgraph Observability["📊 Observability & Monitoring"]
+        direction TB
+        MLFlow["MLFlow<br/>LLM Trace Collection<br/>Experiment Tracking"]
+        VisualMLFlow["Visual MLFlow<br/>TBD - Visualization"]
+        GrafanaDash["Grafana<br/>Monitoring Dashboards"]
+        OtelPrometheus["OpenTelemetry<br/>+ Prometheus<br/>Metrics Collection"]
+    end
+
+    %% External Services
+    subgraph External["🌐 External Services"]
+        direction TB
+        Github["GitHub API"]
+        Jira["Jira API"]
+        BraveSearch["Brave Search API"]
+    end
+
+    %% User Interactions
+    User -->|"Web Interface"| WebUI
+    User -->|"Run Benchmarks"| AgenticBench
+    Admin -->|"Monitor"| GrafanaDash
+
+    %% Frontend to Core
+    WebUI <-->|"API Calls"| LlamaStack
+
+    %% Orchestration Flow
+    AgenticBench -->|"Trigger Tasks"| Kagenti
+    Kagenti -->|"Deploy Agents"| BeeAI
+    Kagenti -->|"Send Traces"| VisualMLFlow
+    BeeAI -->|"LLM Requests"| LlamaStack
+
+    %% LLM Inference Flow
+    LlamaStack -->|"Vector Search"| PgVector
+    LlamaStack -->|"Store Data"| Posgresql
+    LlamaStack -->|"Inference Requests"| KServe
+    KServe -->|"Schedule"| LlmdScheduler
+    KServe -->|"Execute"| LlmdVLLM
+    LlmdScheduler -->|"Assign"| LlmdVLLM
+
+    %% MCP Gateway Integration
+    LlamaStack -->|"Tool Calls"| KuadrantMCP
+    KuadrantMCP <-->|"Route"| GitHubMCP
+    KuadrantMCP <-->|"Route"| JiraMCP
+    KuadrantMCP <-->|"Route"| SearchMCP
+    KuadrantMCP <-->|"Route"| BenchmarkMCP
+
+    %% External Connections
+    GitHubMCP <-->|"REST API"| Github
+    JiraMCP <-->|"REST API"| Jira
+    SearchMCP <-->|"Search API"| BraveSearch
+
+    %% Observability Flow
+    VisualMLFlow -->|"Visualize"| MLFlow
+    MLFlow -->|"Store Traces"| Posgresql
+    MLFlow <-->|"Collect Traces"| LlamaStack
+    OtelPrometheus -->|"Scrape Metrics"| LlamaStack
+    OtelPrometheus -->|"Scrape Metrics"| KServe
+    GrafanaDash -->|"Query"| OtelPrometheus
+    Kagenti -->|"Send Metrics"| MLFlow
+
+    %% Styling with better visibility
+    classDef userStyle fill:#4A90E2,stroke:#2E5C8A,stroke-width:3px,color:#fff
+    classDef frontendStyle fill:#E8F4F8,stroke:#4A90E2,stroke-width:2px,color:#000
+    classDef orchestrationStyle fill:#FFE066,stroke:#CC9900,stroke-width:3px,color:#000
+    classDef inferenceStyle fill:#90EE90,stroke:#2D7A2D,stroke-width:3px,color:#000
+    classDef storageStyle fill:#E8E8E8,stroke:#666,stroke-width:2px,color:#000
+    classDef mcpStyle fill:#DDA0DD,stroke:#8B008B,stroke-width:2px,color:#000
+    classDef observabilityStyle fill:#FF6B6B,stroke:#CC0000,stroke-width:3px,color:#fff
+    classDef externalStyle fill:#F0F0F0,stroke:#999,stroke-width:2px,color:#000
+
     class User,Admin userStyle
     class WebUI frontendStyle
-    class Kagenti,BeeAI orchestrationStyle
+    class Kagenti,BeeAI,AgenticBench orchestrationStyle
     class KServe,LlmdScheduler,LlmdVLLM,LlamaStack inferenceStyle
     class PgVector,Posgresql storageStyle
     class KuadrantMCP,GitHubMCP,JiraMCP,SearchMCP,BenchmarkMCP mcpStyle
     class MLFlow,VisualMLFlow,GrafanaDash,OtelPrometheus observabilityStyle
     class Jira,Github,BraveSearch externalStyle
-    class AgenticBench benchStyle
