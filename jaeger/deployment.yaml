@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: catalystlab-shared
+  labels:
+    app: jaeger
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/all-in-one:latest
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
+            - name: SPAN_STORAGE_TYPE
+              value: "badger"
+            - name: BADGER_EPHEMERAL
+              value: "false"
+            - name: BADGER_DIRECTORY_VALUE
+              value: "/badger/data"
+            - name: BADGER_DIRECTORY_KEY
+              value: "/badger/key"
+          ports:
+            # Jaeger UI
+            - containerPort: 16686
+              name: query
+              protocol: TCP
+            # OTLP gRPC receiver
+            - containerPort: 4317
+              name: otlp-grpc
+              protocol: TCP
+            # OTLP HTTP receiver
+            - containerPort: 4318
+              name: otlp-http
+              protocol: TCP
+            # Jaeger Thrift HTTP (legacy)
+            - containerPort: 14268
+              name: jaeger-http
+              protocol: TCP
+            # Zipkin compatibility
+            - containerPort: 9411
+              name: zipkin
+              protocol: TCP
+            # Agent ports (for direct instrumentation)
+            - containerPort: 6831
+              name: jaeger-thrift
+              protocol: UDP
+            - containerPort: 5778
+              name: config-rest
+              protocol: TCP
+          volumeMounts:
+            - name: badger-data
+              mountPath: /badger
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 16686
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 16686
+            initialDelaySeconds: 15
+            periodSeconds: 30
+      volumes:
+        - name: badger-data
+          persistentVolumeClaim:
+            claimName: jaeger-badger-pvc

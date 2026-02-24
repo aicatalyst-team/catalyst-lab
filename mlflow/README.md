@@ -1,8 +1,10 @@
 # MLflow Deployment on Kubernetes
 
+> 📝 **CONFIGURATION NOTE**: This README uses placeholders for environment-specific values. Before deployment, update `ingress.yaml` with your cluster's external IP. Replace `<CLUSTER_IP>` in examples with your nginx ingress external IP.
+
 Deploy MLflow as an LLM trace viewer and experiment tracking system in the `catalystlab-shared` namespace. This deployment uses CNPG PostgreSQL for metadata storage and integrates with OpenTelemetry for distributed trace collection from LLaMA Stack inference pipelines.
 
-**Target cluster:** `159.253.136.11`
+**Target cluster:** `<CLUSTER_IP>`
 **Namespace:** `catalystlab-shared`
 
 ## Prerequisites
@@ -100,10 +102,10 @@ ingress-nginx-controller-78c9c55db-zhbtr   1/1     Running   0          24d
 **Service with external IP:**
 ```
 NAME                       TYPE           EXTERNAL-IP      PORT(S)
-ingress-nginx-controller   LoadBalancer   159.253.136.11   80:31123/TCP,443:31755/TCP
+ingress-nginx-controller   LoadBalancer   <CLUSTER_IP>   80:31123/TCP,443:31755/TCP
 ```
 
-**External IP:** `159.253.136.11` - Used for constructing the MLflow ingress hostname.
+**External IP:** `<CLUSTER_IP>` - Used for constructing the MLflow ingress hostname.
 
 #### 4. Storage Provisioner
 
@@ -156,7 +158,7 @@ LLaMA Stack will send OpenTelemetry traces to the OTel Collector, which forwards
 |-----------|--------|---------|
 | CNPG PostgreSQL Cluster | ✅ Ready | `pgvector-cluster` healthy with 1/1 instances |
 | PostgreSQL Secret | ✅ Ready | `pgvector-cluster-app` contains credentials |
-| Nginx Ingress | ✅ Ready | External IP: `159.253.136.11` |
+| Nginx Ingress | ✅ Ready | External IP: `<CLUSTER_IP>` |
 | Storage Provisioner | ✅ Ready | `local-path` storage class available |
 | LLaMA Stack | ✅ Ready | Deployment running with service on port 8321 |
 | OTel Collector | ⚪ Pending | To be deployed after MLflow |
@@ -243,7 +245,7 @@ Verify the ingress:
 kubectl get ingress -n catalystlab-shared mlflow
 ```
 
-Expected output should show the hostname `mlflow.159.253.136.11.nip.io`.
+Expected output should show the hostname `mlflow.<CLUSTER_IP>.nip.io`.
 
 ## Verification
 
@@ -252,7 +254,7 @@ Expected output should show the hostname `mlflow.159.253.136.11.nip.io`.
 **Note:** The `/health` endpoint passes even with broken `--allowed-hosts`, so don't rely on this alone.
 
 ```bash
-curl http://mlflow.159.253.136.11.nip.io/health
+curl http://mlflow.<CLUSTER_IP>.nip.io/health
 ```
 
 Expected: `OK`
@@ -262,7 +264,7 @@ Expected: `OK`
 This is the **real test** — it will return 403 if `--allowed-hosts` is configured incorrectly:
 
 ```bash
-curl -X POST http://mlflow.159.253.136.11.nip.io/api/2.0/mlflow/experiments/search \
+curl -X POST http://mlflow.<CLUSTER_IP>.nip.io/api/2.0/mlflow/experiments/search \
   -H 'Content-Type: application/json' -d '{}'
 ```
 
@@ -279,7 +281,7 @@ If you get `403 Forbidden` with "DNS rebinding" error, check the `--allowed-host
 Open in browser:
 
 ```
-http://mlflow.159.253.136.11.nip.io
+http://mlflow.<CLUSTER_IP>.nip.io
 ```
 
 You should see the MLflow UI with no experiments yet.
@@ -293,7 +295,7 @@ After MLflow is running and verified, set up trace collection:
 Create an experiment for LLaMA Stack traces:
 
 ```bash
-curl -X POST http://mlflow.159.253.136.11.nip.io/api/2.0/mlflow/experiments/create \
+curl -X POST http://mlflow.<CLUSTER_IP>.nip.io/api/2.0/mlflow/experiments/create \
   -H 'Content-Type: application/json' \
   -d '{"name": "llamastack-traces"}'
 ```
@@ -351,40 +353,40 @@ If not configured, update the LLaMA Stack deployment to include this environment
 
 Trigger some inference requests through LLaMA Stack, then check the MLflow UI:
 
-1. Go to: `http://mlflow.159.253.136.11.nip.io`
+1. Go to: `http://mlflow.<CLUSTER_IP>.nip.io`
 2. Click on **Experiments** → **llamastack-traces**
 3. Click on the **Traces** tab
 4. You should see traces appearing with span details
 
-## Deployment Status
+## Deployment Verification
 
-**Deployed on:** 2026-02-20
+Use these commands to verify your deployment:
 
-### MLflow Core Components
+```bash
+# Check MLflow components
+kubectl get pods,svc,pvc,ingress -n catalystlab-shared -l app=mlflow
 
-| Component | Status | Details |
-|-----------|--------|---------|
-| Database | ✅ Deployed | PostgreSQL `mlflow` database created |
-| PVC | ✅ Bound | `mlflow-artifacts-pvc` (10Gi, local-path) |
-| Deployment | ✅ Running | Pod `mlflow-5f8c98f876-r4rqj` (1/1) |
-| Service | ✅ Active | ClusterIP `10.99.143.31:5000` |
-| Ingress | ✅ Active | `mlflow.159.253.136.11.nip.io` |
+# Check OTel Collector
+kubectl get pods,svc -n catalystlab-shared -l app=otel-collector
 
-### OTel Trace Collection
+# Verify database
+kubectl exec -n catalystlab-shared pgvector-cluster-1 -- \
+  psql -U postgres -c '\l' | grep mlflow
 
-| Component | Status | Details |
-|-----------|--------|---------|
-| Experiment | ✅ Created | `llamastack-traces` (ID: 1) |
-| OTel Collector ConfigMap | ✅ Deployed | Experiment ID configured |
-| OTel Collector Deployment | ✅ Running | Pod `otel-collector-6c776b7ccd-hw6gp` (1/1) |
-| OTel Collector Service | ✅ Active | ClusterIP `10.100.19.220:4317,4318` |
-| LLaMA Stack Config | ✅ Verified | `OTEL_EXPORTER_OTLP_ENDPOINT` configured |
+# Expected resources:
+# - Database: mlflow (PostgreSQL)
+# - PVC: mlflow-artifacts-pvc (Bound, 10Gi)
+# - Deployment: mlflow (1/1 Running)
+# - Service: mlflow (ClusterIP, port 5000)
+# - Ingress: mlflow (hosts: mlflow.<CLUSTER_IP>.nip.io)
+# - OTel Collector: otel-collector (1/1 Running, ports 4317,4318)
+```
 
 ### Access Information
 
-- **MLflow UI:** http://mlflow.159.253.136.11.nip.io
-- **MLflow API:** http://mlflow.159.253.136.11.nip.io/api/2.0/mlflow/
-- **OTel Collector (internal):** http://otel-collector.catalystlab-shared.svc.cluster.local:4317
+- **MLflow UI:** `http://mlflow.<CLUSTER_IP>.nip.io` (replace `<CLUSTER_IP>` with your nginx ingress external IP)
+- **MLflow API:** `http://mlflow.<CLUSTER_IP>.nip.io/api/2.0/mlflow/`
+- **OTel Collector (internal):** `http://otel-collector.catalystlab-shared.svc.cluster.local:4317`
 
 ## Troubleshooting
 
@@ -426,7 +428,7 @@ kubectl get deployment mlflow -n catalystlab-shared -o yaml | grep allowed-hosts
 
 Should include:
 ```
---allowed-hosts=mlflow.159.253.136.11.nip.io,mlflow.catalystlab-shared.svc.cluster.local,mlflow.catalystlab-shared.svc.cluster.local:5000,localhost,localhost:5000
+--allowed-hosts=mlflow.<CLUSTER_IP>.nip.io,mlflow.catalystlab-shared.svc.cluster.local,mlflow.catalystlab-shared.svc.cluster.local:5000,localhost,localhost:5000
 ```
 
 ### Gateway API Errors
@@ -525,9 +527,49 @@ LLaMA Stack ──(OTel SDK)──► OTel Collector ──(otlphttp)──► M
 5. MLflow stores artifacts in PVC-backed filesystem
 6. Users access traces and experiments via MLflow UI (port 5000)
 
+## Optional: Jaeger Integration
+
+> **Note**: Jaeger is an optional complementary tool. MLflow provides full trace functionality independently.
+
+Jaeger can be deployed alongside MLflow to provide service graph visualization that complements MLflow's waterfall timeline views:
+
+| Feature | MLflow | Jaeger |
+|---------|--------|--------|
+| Waterfall/Timeline View | ✅ Excellent | ✅ Basic |
+| Service Dependency Graph | ❌ Not available | ✅ Excellent |
+| Experiment Tracking | ✅ Full support | ❌ Not available |
+
+### When to Use Each Tool
+
+- **Use MLflow for**: Historical trace analysis, experiment tracking, waterfall views, persistent storage
+- **Use Jaeger for**: Service architecture visualization, dependency analysis, troubleshooting service communication
+
+### Architecture with Jaeger
+
+```
+LLaMA Stack → OTel Collector ─┬─► MLflow (waterfall views, experiments)
+                               └─► Jaeger (service graphs, dependencies)
+```
+
+Both systems receive the same traces from the OTel Collector via fan-out configuration.
+
+### Deployment
+
+See [../jaeger/README.md](../jaeger/README.md) for complete Jaeger deployment instructions.
+
+### Access URLs
+
+- **MLflow UI**: http://mlflow.<CLUSTER_IP>.nip.io
+- **Jaeger UI** (if deployed): http://jaeger.<CLUSTER_IP>.nip.io
+
+### Security Warning
+
+⚠️ Jaeger deployment requires security review. See [Jaeger Security Considerations](../jaeger/README.md#security-considerations) for details.
+
 ## References
 
 - [MLflow Documentation](https://mlflow.org/docs/latest/index.html)
 - [CloudNativePG Documentation](https://cloudnative-pg.io/documentation/)
 - [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
 - [LLaMA Stack](https://github.com/meta-llama/llama-stack)
+- [Jaeger Documentation](https://www.jaegertracing.io/docs/latest/) (optional integration)
