@@ -1,11 +1,12 @@
 # Catalyst Lab
 
-AI Catalyst infrastructure and tooling for LLM deployment, benchmarking, and observability on Kubernetes.
+AI Catalyst infrastructure and tooling for LLM deployment, benchmarking, and observability based on Open source projects.
 
 ## Overview
 
 Catalyst Lab provides Kubernetes configurations and documentation for deploying a complete LLM inference stack with supporting infrastructure:
 
+# The below isn't the final list.
 - **LLM Benchmarking** - GuideLLM configurations for performance testing LLM inference endpoints
 - **Vector Database** - PostgreSQL with pgvector extension for embedding storage and similarity search
 - **Model Serving** - KServe integration for scalable model deployment
