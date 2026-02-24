@@ -41,7 +41,7 @@ NAME                    READY   STATUS    RESTARTS   AGE
 cnpg-cloudnative-pg-*   1/1     Running   0          ...
 ```
 
-### 2. Create the namespace
+### 2. Create the shared namespace (if it doesn't exist)
 
 ```bash
 kubectl create namespace catalystlab-shared
