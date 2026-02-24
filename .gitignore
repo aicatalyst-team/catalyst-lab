@@ -1,1 +1,18 @@
 guidellm/results/
+
+# Sensitive / work-organizing docs (never commit)
+CLUSTER.md
+PLAN.md
+journal/
+
+# Pre-commit secrets baseline
+.secrets.baseline
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# macOS
+.DS_Store

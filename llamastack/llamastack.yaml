@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llamastack-pvc
+  namespace: catalystlab-shared
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llamastack
+  namespace: catalystlab-shared
+  labels:
+    app: llamastack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llamastack
+  template:
+    metadata:
+      labels:
+        app: llamastack
+    spec:
+      containers:
+        - name: llamastack
+          image: llamastack/distribution-starter:0.5.0
+          ports:
+            - containerPort: 8321
+          env:
+            - name: RUN_CONFIG_PATH
+              value: "/etc/llama-stack/config.yaml"
+            - name: VLLM_URL
+              value: "http://qwen3-next-80b-kserve-workload-svc.kserve-lab.svc.cluster.local:8000/v1"
+            - name: MODEL_NAME
+              value: "RedHatAI/Qwen3-Next-80B-A3B-Instruct-FP8"
+            - name: VLLM_MAX_TOKENS
+              value: "4096"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.catalystlab-shared.svc.cluster.local:4317"
+            # PostgreSQL (KV + SQL store for LLaMA Stack state)
+            - name: POSTGRES_HOST
+              value: "pgvector-cluster-rw"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "llamastack"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-cluster-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-cluster-app
+                  key: password
+            # PGVector (vector_io provider — same instance, vectordb database)
+            - name: PGVECTOR_HOST
+              value: "pgvector-cluster-rw"
+            - name: PGVECTOR_PORT
+              value: "5432"
+            - name: PGVECTOR_DB
+              value: "vectordb"
+            - name: PGVECTOR_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-cluster-app
+                  key: username
+            - name: PGVECTOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-cluster-app
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/llama-stack
+              readOnly: true
+            - name: data
+              mountPath: /.llama
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8321
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8321
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: llamastack-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: llamastack-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llamastack
+  namespace: catalystlab-shared
+  labels:
+    app: llamastack
+spec:
+  selector:
+    app: llamastack
+  ports:
+    - port: 8321
+      targetPort: 8321

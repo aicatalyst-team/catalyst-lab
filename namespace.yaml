@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: catalystlab-shared
+  labels:
+    istio.io/dataplane-mode: ambient
+    kagenti-enabled: "true"
+    shared-gateway-access: "true"
