@@ -10,7 +10,7 @@ Catalyst Lab provides Kubernetes configurations and documentation for deploying 
 - **LLM Benchmarking** - GuideLLM configurations for performance testing LLM inference endpoints
 - **Vector Database** - PostgreSQL with pgvector extension for embedding storage and similarity search
 - **Model Serving** - KServe integration for scalable model deployment
-- **Observability** - Langfuse integration for LLM monitoring and prompt management
+- **Observability** - MLflow integration for LLM monitoring and prompt management
 
 ## Components
 
@@ -171,9 +171,9 @@ catalyst-lab/
 
 ## Integration with Other Projects
 
-### Langfuse (Observability)
+### MLflow (Observability)
 
-[Langfuse](https://github.com/aicatalyst-team/langfuse) provides LLM observability, prompt management, and evaluation metrics. Deploy it to monitor your inference endpoints and track model performance.
+[MLflow](https://mlflow.org/docs/latest/ml/mlflow-3/) provides LLM observability, prompt management, and evaluation metrics. Deploy it to monitor your inference endpoints and track model performance.
 
 ### KServe (Model Serving)
 
