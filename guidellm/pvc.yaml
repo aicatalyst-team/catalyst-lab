@@ -3,9 +3,15 @@ kind: PersistentVolumeClaim
 metadata:
   name: benchmark-results-pvc
   namespace: guide-llm
+  labels:
+    app.kubernetes.io/name: guidellm
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: catalyst-lab
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
+  # Uncomment and modify storageClassName if needed for your cluster
+  # storageClassName: local-path
