@@ -1,280 +1,198 @@
-# Catalyst Lab
+# Catalyst Lab - High Level Overview
 
-AI Catalyst infrastructure and tooling for LLM deployment, benchmarking, and observability on Kubernetes.
+> Production-ready Kubernetes infrastructure for LLM inference, agentic AI, and observability
 
-## Overview
+## What is Catalyst Lab?
 
-Catalyst Lab provides Kubernetes configurations and documentation for deploying a complete LLM inference stack with supporting infrastructure:
+Catalyst Lab is a comprehensive Kubernetes-based platform for deploying, operating, and monitoring Large Language Model (LLM) applications with agentic AI capabilities. It provides the complete stack needed to run production LLM workloads with enterprise-grade observability, benchmarking, and integration capabilities.
 
-- **LLM Benchmarking** - GuideLLM configurations for performance testing LLM inference endpoints
-- **Vector Database** - PostgreSQL with pgvector extension for embedding storage and similarity search
-- **Model Serving** - KServe integration for scalable model deployment
-- **Observability** - Langfuse integration for LLM monitoring and prompt management
+## Architecture at a Glance
 
-## Components
-
-### GuideLLM Benchmarking
-
-Kubernetes Job configurations for running [GuideLLM](https://github.com/vllm-project/guidellm) benchmarks against vLLM and KServe inference endpoints.
-
-**Features:**
-- OpenAI-compatible API benchmarking
-- Multiple load profiles (sweep, constant, poisson, concurrent, throughput)
-- Metrics: TTFT, ITL, end-to-end latency, throughput
-- Over-saturation detection
-- Results output in JSON, CSV, and HTML formats
-
-**Location:** [`guidellm/`](./guidellm)
-
-[View Documentation →](./guidellm/README.md)
-
-### PostgreSQL + pgvector
-
-Production-ready PostgreSQL 17 deployment with pgvector extension using the CloudNativePG operator.
-
-**Features:**
-- Vector similarity search with HNSW indexing
-- CloudNativePG operator for automated management
-- Configurable resource allocation
-- Persistent storage with local-path provisioner
-- Auto-generated credentials
-
-**Location:** [`pgvector/`](./pgvector)
-
-[View Documentation →](./pgvector/README.md)
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Kubernetes Cluster                       │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌──────────────┐         ┌─────────────┐                   │
-│  │   GuideLLM   │────────▶│   KServe    │                   │
-│  │  Benchmark   │         │ Inference   │                   │
-│  │     Job      │         │  Service    │                   │
-│  └──────────────┘         └─────────────┘                   │
-│         │                        │                           │
-│         │                        ▼                           │
-│         │                  ┌──────────┐                      │
-│         │                  │   vLLM   │                      │
-│         │                  │  Engine  │                      │
-│         │                  └──────────┘                      │
-│         │                                                     │
-│         ▼                                                     │
-│  ┌──────────────┐         ┌─────────────┐                   │
-│  │  Benchmark   │         │ PostgreSQL  │                   │
-│  │   Results    │         │  pgvector   │                   │
-│  │     PVC      │         │   Cluster   │                   │
-│  └──────────────┘         └─────────────┘                   │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    Users[👥 Users] --> Frontend[🎨 WebUI]
+    Frontend --> Agents[🤖 AI Agents<br/>Kagenti/BeeAI]
+    Agents --> LLM[🚀 LLM Inference<br/>LLAMA-STACK + vLLM]
+    LLM --> MCP[🔌 MCP Gateway<br/>GitHub/Jira/Search]
+    LLM --> Storage[💾 Storage<br/>PgVector + PostgreSQL]
+    LLM --> Obs[📊 Observability<br/>MLFlow + Grafana]
+    
+    style Users fill:#fff,stroke:#333,stroke-width:2px
+    style Frontend fill:#fff,stroke:#333
+    style Agents fill:#ffd700,stroke:#333,stroke-width:2px
+    style LLM fill:#90EE90,stroke:#333,stroke-width:2px
+    style MCP fill:#E6E6FA,stroke:#333
+    style Storage fill:#fff,stroke:#333
+    style Obs fill:#FF6B6B,stroke:#333
 ```
 
-## Prerequisites
+## Core Capabilities
 
-- Kubernetes cluster (1.24+)
-- kubectl configured with cluster access
-- Helm 3.x
-- Sufficient cluster resources:
-  - CPU: 4+ cores available
-  - Memory: 8+ GB available
-  - Storage: 30+ GB available
+### 🤖 Agentic AI
+- **Kagenti**: Kubernetes-native agent orchestration
+- **BeeAI**: Production-ready AI agents with A2A communication
+- **Agentic Benchmarks**: TravelPlanner, VendingBench evaluation suites
+
+### 🚀 LLM Inference
+- **LLAMA-STACK**: Unified LLM inference orchestration
+- **KServe**: Kubernetes-native model serving
+- **vLLM**: High-performance inference engine with GPU optimization
+- **llm-d scheduler**: Intelligent workload scheduling
+
+### 🔌 Integrations (MCP Servers)
+- **GitHub**: Source code and repository management
+- **Jira**: Project tracking and issue management
+- **Brave Search**: Web search capabilities
+- **Kuadrant Gateway**: Centralized MCP routing and management
+
+### 💾 Data & Storage
+- **PostgreSQL**: Primary data store for applications and traces
+- **PgVector**: Vector embeddings for semantic search and RAG
+- **Persistent Storage**: Benchmark results and model artifacts
+
+### 📊 Observability & Monitoring
+- **MLFlow**: LLM trace collection and experiment tracking
+- **OpenTelemetry + Prometheus**: Metrics collection and monitoring
+- **Grafana**: Real-time dashboards and alerting
+- **GuideLLM**: Performance benchmarking and load testing
+
+## Technology Stack
+
+| Layer | Technologies |
+|-------|-------------|
+| **Orchestration** | Kubernetes, Kagenti, BeeAI |
+| **LLM Inference** | LLAMA-STACK, KServe, vLLM |
+| **Data Storage** | PostgreSQL 17, PgVector, CloudNativePG |
+| **Observability** | MLFlow, OpenTelemetry, Prometheus, Grafana |
+| **Benchmarking** | GuideLLM, TravelPlanner, VendingBench |
+| **Integration** | MCP (Model Context Protocol), Kuadrant |
+| **Languages** | Python, Go, TypeScript |
 
 ## Quick Start
 
-### 1. Deploy PostgreSQL with pgvector
+### Prerequisites
+- Kubernetes cluster (1.24+) with GPU nodes
+- kubectl and Helm 3.x installed
+- 8GB+ RAM, 4+ CPU cores, 50GB+ storage available
+
+### Deploy the Stack
 
 ```bash
-# Install CloudNativePG operator
-helm repo add cnpg https://cloudnative-pg.github.io/charts
-helm repo update
-helm install cnpg cnpg/cloudnative-pg \
-  --namespace cnpg-system \
-  --create-namespace
+# 1. Clone the repository
+git clone https://github.com/aicatalyst-team/catalyst-lab
+cd catalyst-lab
 
-# Deploy the database cluster
+# 2. Deploy vector database
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm install cnpg cnpg/cloudnative-pg --namespace cnpg-system --create-namespace
 kubectl create namespace catalystlab-shared
 kubectl apply -f pgvector/cluster.yaml
-```
 
-Verify deployment:
-
-```bash
-kubectl get cluster -n catalystlab-shared
-```
-
-### 2. Run LLM Benchmarks
-
-```bash
-# Create benchmark namespace
+# 3. Run benchmarks (optional)
 kubectl create namespace guide-llm
-
-# Create PVC for results (create the YAML first)
+kubectl apply -f guidellm/namespace.yaml
 kubectl apply -f guidellm/pvc.yaml
-
-# Update benchmark-job.yaml with your endpoint details, then:
+# Update benchmark-job.yaml with your endpoint, then:
 kubectl apply -f guidellm/benchmark-job.yaml
+```
 
-# Monitor progress
+### Verify Deployment
+
+```bash
+# Check PgVector cluster
+kubectl get cluster -n catalystlab-shared
+
+# Monitor benchmark job
 kubectl logs -f job/guidellm-benchmark -n guide-llm
 ```
 
-## Configuration
+## Key Features
 
-### GuideLLM
+### 🎯 Production-Ready
+- High-availability PostgreSQL with CloudNativePG operator
+- GPU-optimized LLM inference with vLLM
+- Auto-scaling inference workloads with KServe
+- Enterprise observability with MLFlow and Grafana
 
-Before running benchmarks, update `guidellm/benchmark-job.yaml`:
+### 🔐 Security & Compliance
+- Kubernetes RBAC and network policies
+- Secure secret management
+- TLS/HTTPS for external endpoints
+- Audit logging and trace collection
 
-- **Line 18:** Replace `<inference-endpoint>:<port>` with your vLLM/KServe endpoint
-- **Line 20:** Replace `<model-name>` with your model identifier
-- **Line 33:** Replace `<hf-model-id>` with the HuggingFace tokenizer model ID
+### 📈 Performance & Scalability
+- Horizontal scaling for inference workloads
+- GPU resource pooling and efficient batching
+- Optimized vector similarity search with HNSW indexes
+- Distributed agent orchestration
 
-Example values:
-```yaml
-- "--target"
-- "http://vllm-inference.model-serving.svc.cluster.local:8000"
-- "--model"
-- "meta-llama/Llama-3.1-8B-Instruct"
-- "--processor"
-- "meta-llama/Llama-3.1-8B-Instruct"
-```
+### 🧪 Testing & Benchmarking
+- Automated performance testing with GuideLLM
+- Agentic AI evaluation benchmarks
+- Load testing with realistic traffic patterns
+- Comprehensive metrics (TTFT, ITL, throughput)
 
-### pgvector
+## Use Cases
 
-The PostgreSQL cluster is configured in `pgvector/cluster.yaml`:
+| Use Case | Description |
+|----------|-------------|
+| **RAG Applications** | Build retrieval-augmented generation systems with PgVector |
+| **Agentic AI** | Deploy autonomous agents with tool use and planning |
+| **LLM Operations** | Production LLM serving with observability and monitoring |
+| **Research & Experimentation** | Benchmark and evaluate LLM performance |
+| **Enterprise Integration** | Connect LLMs to GitHub, Jira, and search APIs |
 
-- **Node selector:** Targets `worker-gpu2` - modify for your cluster
-- **Storage:** 20Gi with `local-path` storage class
-- **Resources:** 1-4 CPU cores, 2-4Gi memory
-- **Instances:** Single instance (no HA)
-
-To deploy on different nodes, update the `nodeSelector` field.
-
-## Repository Structure
+## Project Structure
 
 ```
 catalyst-lab/
-├── guidellm/               # LLM benchmarking configurations
-│   ├── README.md          # GuideLLM documentation
+├── guidellm/              # LLM benchmarking (GuideLLM)
 │   ├── benchmark-job.yaml # Kubernetes Job for benchmarks
-│   ├── namespace.yaml     # Namespace definition
-│   └── pvc.yaml           # PersistentVolumeClaim for results
-├── pgvector/              # PostgreSQL + pgvector deployment
-│   ├── README.md          # pgvector documentation
-│   └── cluster.yaml       # CloudNativePG cluster definition
-├── LICENSE                # Repository license
-└── README.md              # This file
+│   ├── namespace.yaml     # Namespace configuration
+│   └── pvc.yaml          # Storage for results
+├── pgvector/             # Vector database (PostgreSQL + pgvector)
+│   └── cluster.yaml      # CloudNativePG cluster
+├── ARCHITECTURE.md       # Detailed architecture documentation
+├── architecture.mmd      # Mermaid diagram source
+└── README.md            # This file (high-level overview)
 ```
 
-## Integration with Other Projects
+## Related Projects
 
-### Langfuse (Observability)
+### [Langfuse](https://github.com/aicatalyst-team/langfuse)
+LLM observability platform with prompt management, evaluation metrics, and trace analysis.
 
-[Langfuse](https://github.com/aicatalyst-team/langfuse) provides LLM observability, prompt management, and evaluation metrics. Deploy it to monitor your inference endpoints and track model performance.
+### [KServe](https://github.com/aicatalyst-team/kserve)
+Kubernetes-native model serving for scalable ML inference across multiple frameworks.
 
-### KServe (Model Serving)
+## Documentation
 
-[KServe](https://github.com/aicatalyst-team/kserve) enables standardized, scalable model serving on Kubernetes. Use it to deploy vLLM-backed inference services that GuideLLM can benchmark.
-
-## Usage Examples
-
-### Running a Quick Benchmark
-
-```bash
-# One-off benchmark pod (no PVC needed)
-kubectl run guidellm-bench --rm -it \
-  --image=ghcr.io/vllm-project/guidellm:latest \
-  --restart=Never \
-  -n guide-llm \
-  --env="GUIDELLM__TARGET=http://your-endpoint:8000" \
-  --env="GUIDELLM__MODEL=your-model-name" \
-  --env="GUIDELLM__DATA=prompt_tokens=256,output_tokens=128" \
-  --env="GUIDELLM__MAX_SECONDS=60"
-```
-
-### Connecting to pgvector
-
-```bash
-# Get database credentials
-kubectl get secret pgvector-cluster-app -n catalystlab-shared \
-  -o jsonpath='{.data.password}' | base64 -d && echo
-
-# Port-forward for local access
-kubectl port-forward -n catalystlab-shared svc/pgvector-cluster-rw 5432:5432
-
-# Connect with psql
-psql -h localhost -U vectordb -d vectordb
-```
-
-## Troubleshooting
-
-### GuideLLM Connection Issues
-
-If benchmarks fail to connect:
-
-```bash
-# Test endpoint from within the cluster
-kubectl run curl-test --rm -it --image=curlimages/curl --restart=Never -n guide-llm -- \
-  curl -s http://your-endpoint:8000/v1/models
-```
-
-### pgvector Cluster Not Ready
-
-Check cluster status and events:
-
-```bash
-kubectl describe cluster pgvector-cluster -n catalystlab-shared
-kubectl get pods -n catalystlab-shared
-kubectl logs -n catalystlab-shared pgvector-cluster-1
-```
-
-### Insufficient Resources
-
-Check resource availability:
-
-```bash
-kubectl describe nodes
-kubectl top nodes
-```
+- 🏗️ [Architecture Guide](./ARCHITECTURE.md) - Detailed system architecture with Mermaid diagrams
+- 🔧 [GuideLLM Benchmarking](./guidellm/README.md) - Performance testing guide
+- 💾 [PgVector Setup](./pgvector/README.md) - Vector database deployment
 
 ## Roadmap
 
-- [ ] Add NetworkPolicy configurations for security isolation
-- [ ] Helm charts for easier deployment and customization
-- [ ] Kustomize overlays for dev/staging/prod environments
-- [ ] Automated backup configurations for pgvector
-- [ ] ServiceMonitor for Prometheus integration
-- [ ] Example CI/CD pipelines
-- [ ] Multi-tenant deployment examples
+- [ ] **Enhanced Observability**: Visual MLFlow integration, advanced dashboards
+- [ ] **Additional MCP Servers**: Slack, Confluence, custom integrations
+- [ ] **Helm Charts**: Simplified deployment with Helm
+- [ ] **Multi-Cluster**: Federation for global LLM deployment
+- [ ] **Security Hardening**: mTLS, policy enforcement, advanced RBAC
+- [ ] **CI/CD Templates**: Automated testing and deployment pipelines
 
-## Contributing
+## Community & Support
 
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/improvement`)
-3. Test your changes in a Kubernetes cluster
-4. Commit your changes (`git commit -am 'Add new feature'`)
-5. Push to the branch (`git push origin feature/improvement`)
-6. Create a Pull Request
+- 🐛 **Issues**: [GitHub Issues](https://github.com/aicatalyst-team/catalyst-lab/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/aicatalyst-team/catalyst-lab/discussions)
+- 📝 **Contributing**: Fork, create a feature branch, test changes, and submit a PR
+- 📚 **Resources**: Check component-specific READMEs for detailed guides
 
 ## License
 
 See [LICENSE](./LICENSE) for details.
 
-## Resources
+---
 
-- [GuideLLM Documentation](https://github.com/vllm-project/guidellm)
-- [CloudNativePG Operator](https://cloudnative-pg.io/)
-- [pgvector Extension](https://github.com/pgvector/pgvector)
-- [KServe Documentation](https://kserve.github.io/website/)
-- [vLLM Documentation](https://docs.vllm.ai/)
+**🚀 Built for production LLM deployments on Kubernetes**
 
-## Support
-
-For issues and questions:
-- Open an issue in this repository
-- Check component-specific READMEs for detailed documentation
-- Review upstream project documentation for component-specific issues
+[Architecture](./ARCHITECTURE.md) | [View on GitHub](https://github.com/aicatalyst-team/catalyst-lab)
