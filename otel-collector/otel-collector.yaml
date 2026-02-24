@@ -1,0 +1,133 @@
+# OpenTelemetry Collector for catalystlab-shared namespace
+# Receives traces from LLaMA Stack, processes them, and exports to MLflow + Jaeger.
+#
+# Pipeline: LLaMA Stack → OTLP (gRPC/HTTP) → [filter → transform] → MLflow + Jaeger
+#
+# Key processors:
+#   - filter/drop-probes: Drops readiness/liveness probe spans (GET /v1/models)
+#   - transform: Injects mlflow.spanType from gen_ai semantic conventions,
+#     and sets peer.service for vLLM spans (Jaeger dependency graph)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: catalystlab-shared
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+
+    processors:
+      filter/drop-probes:
+        traces:
+          span:
+            # Drop LLaMA Stack readiness/liveness probe spans (GET /v1/models every 10-30s)
+            # Without this filter, probes outnumber real traces ~150:1 within days.
+            - 'name == "GET /v1/models"'
+            - 'name == "GET /v1/models http send"'
+
+      transform:
+        trace_statements:
+          - context: span
+            statements:
+              # --- MLflow span type injection ---
+              # MLflow reads mlflow.spanType to populate the "Span Type" column.
+              # openai-v2 instrumentation sets gen_ai.operation.name but NOT mlflow.spanType.
+              # Map gen_ai.operation.name → mlflow.spanType so MLflow displays it.
+              - set(attributes["mlflow.spanType"], "CHAT_MODEL") where attributes["gen_ai.operation.name"] == "chat"
+              - set(attributes["mlflow.spanType"], "LLM") where attributes["gen_ai.operation.name"] == "text_completion"
+
+              # --- Jaeger service dependency graph ---
+              # For HTTP spans calling vLLM, set service name and peer.service
+              # so Jaeger's Dependencies view shows llamastack → vllm edges.
+              - set(resource.attributes["service.name"], "vllm") where attributes["http.url"] != nil and IsMatch(attributes["http.url"], ".*qwen3-next-80b.*")
+              - set(attributes["peer.service"], "vllm") where attributes["http.url"] != nil and IsMatch(attributes["http.url"], ".*qwen3-next-80b.*")
+
+    exporters:
+      # MLflow trace ingestion endpoint (experiment ID 1 = "llamastack-traces")
+      otlphttp:
+        endpoint: "http://mlflow.catalystlab-shared.svc.cluster.local:5000"
+        headers:
+          x-mlflow-experiment-id: "1"
+
+      # Jaeger for distributed trace visualization and dependency graphs
+      otlp/jaeger:
+        endpoint: "http://jaeger-collector.catalystlab-shared.svc.cluster.local:4317"
+        tls:
+          insecure: true
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [filter/drop-probes, transform]
+          exporters: [otlphttp, otlp/jaeger]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: catalystlab-shared
+  labels:
+    app: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          # Using contrib image for filter, transform processors
+          image: otel/opentelemetry-collector-contrib:latest
+          args: ["--config=/etc/otel/config.yaml"]
+          ports:
+            - containerPort: 4317
+              name: grpc
+              protocol: TCP
+            - containerPort: 4318
+              name: http
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: catalystlab-shared
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - name: grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+  type: ClusterIP

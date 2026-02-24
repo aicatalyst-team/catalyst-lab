@@ -43,6 +43,15 @@ spec:
               value: "4096"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://otel-collector.catalystlab-shared.svc.cluster.local:4317"
+            # Enable prompt/completion content capture in OTel log records.
+            # Note: openai-v2 v2.3b0 emits content via EventLogger (log records),
+            # NOT span attributes — so this does NOT populate MLflow request/response
+            # preview today. It WILL be useful once a LoggerProvider is configured
+            # and logs are routed to Jaeger (which displays them alongside traces).
+            # When openai-v2 adopts SPAN_AND_EVENT mode (from opentelemetry-util-genai),
+            # this will also populate span attributes for MLflow.
+            - name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+              value: "true"
             # PostgreSQL (KV + SQL store for LLaMA Stack state)
             - name: POSTGRES_HOST
               value: "pgvector-cluster-rw"
