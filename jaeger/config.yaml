@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-config
+  namespace: catalystlab-shared
+  labels:
+    app: jaeger
+data:
+  config.yaml: |
+    service:
+      extensions: [jaeger_storage, jaeger_query]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [jaeger_storage_exporter]
+
+    extensions:
+      jaeger_storage:
+        backends:
+          some_storage:
+            memory:
+              max_traces: 100000
+
+      jaeger_query:
+        storage:
+          traces: some_storage
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      batch:
+
+    exporters:
+      jaeger_storage_exporter:
+        trace_storage: some_storage

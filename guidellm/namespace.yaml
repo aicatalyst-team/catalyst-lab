@@ -3,4 +3,6 @@ kind: Namespace
 metadata:
   name: guide-llm
   labels:
-    app: guidellm
+    app.kubernetes.io/name: guidellm
+    app.kubernetes.io/component: benchmarking
+    app.kubernetes.io/part-of: catalyst-lab
