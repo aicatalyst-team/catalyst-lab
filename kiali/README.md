@@ -825,7 +825,7 @@ annotations:
 ```bash
 # Update ingress.yaml annotations:
 annotations:
-  nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  nginx.ingress.kubernetes.io/whitelist-source-range: "<YOUR_IP_RANGES>"
 ```
 
 **Enable OAuth2 with Kiali (Recommended):**

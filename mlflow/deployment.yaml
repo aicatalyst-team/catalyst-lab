@@ -25,7 +25,7 @@ spec:
             - --port=5000
             - --backend-store-uri=postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@pgvector-cluster-rw:5432/mlflow
             - --artifacts-destination=/mlflow/artifacts
-            - --allowed-hosts=mlflow.159.253.136.11.nip.io,mlflow.catalystlab-shared.svc.cluster.local,mlflow.catalystlab-shared.svc.cluster.local:5000,localhost,localhost:5000
+            - --allowed-hosts=mlflow.<CLUSTER_IP>.nip.io,mlflow.catalystlab-shared.svc.cluster.local,mlflow.catalystlab-shared.svc.cluster.local:5000,localhost,localhost:5000
           ports:
             - containerPort: 5000
           env:
