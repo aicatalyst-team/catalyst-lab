@@ -143,7 +143,7 @@ llamastack-9ffb4584c-scswr   1/1     Running   0          11h
 **Service:**
 ```
 NAME         TYPE        CLUSTER-IP      PORT(S)
-llamastack   ClusterIP   10.110.77.210   8321/TCP
+llamastack   ClusterIP   10.x.x.x        8321/TCP
 ```
 
 LLaMA Stack will send OpenTelemetry traces to the OTel Collector, which forwards them to MLflow's `/v1/traces` endpoint.

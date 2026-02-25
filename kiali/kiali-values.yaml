@@ -37,7 +37,7 @@ external_services:
     # Internal URL (Kiali backend → Jaeger API)
     in_cluster_url: "http://jaeger-query.catalystlab-shared.svc.cluster.local:16686"
     # External URL (browser → Jaeger UI links)
-    external_url: "http://jaeger.159.253.136.11.nip.io"
+    external_url: "http://jaeger.<CLUSTER_IP>.nip.io"
     # Jaeger v2 uses REST API, not gRPC
     use_grpc: false
     # Enable namespace-aware queries
