@@ -1,0 +1,67 @@
+# Kiali Server Configuration
+# Helm values for Kiali deployment
+
+deployment:
+  # Deploy in istio-system namespace
+  namespace: istio-system
+
+  # Monitor all namespaces
+  accessible_namespaces:
+    - '**'
+
+  # Lab-only: No authentication
+  auth:
+    strategy: anonymous
+
+  # Resource allocation
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+# External services integration
+external_services:
+  # Prometheus integration
+  prometheus:
+    url: "http://prometheus-stack-kube-prom-prometheus.monitoring.svc.cluster.local:9090"
+    cache_enabled: true
+    cache_duration: 10
+
+  # Jaeger integration
+  tracing:
+    enabled: true
+    provider: jaeger
+    # Internal URL (Kiali backend → Jaeger API)
+    in_cluster_url: "http://jaeger-query.catalystlab-shared.svc.cluster.local:16686"
+    # External URL (browser → Jaeger UI links)
+    external_url: "http://jaeger.159.253.136.11.nip.io"
+    # Jaeger v2 uses REST API, not gRPC
+    use_grpc: false
+    # Enable namespace-aware queries
+    namespace_selector: true
+    # Query settings
+    query_timeout: 30
+
+  # Grafana integration (disabled)
+  grafana:
+    enabled: false
+
+# Server configuration
+server:
+  web_root: /
+  port: 20001
+
+# Kiali features
+features:
+  # Disable write actions (lab environment)
+  istio_injection_action: false
+
+# Istio configuration
+istio_namespace: istio-system
+
+# Kiali version and image configuration
+installation_tag: ""
+version: "latest"

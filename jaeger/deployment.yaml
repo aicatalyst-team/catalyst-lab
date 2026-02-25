@@ -19,18 +19,10 @@ spec:
     spec:
       containers:
         - name: jaeger
-          image: jaegertracing/all-in-one:latest
-          env:
-            - name: COLLECTOR_OTLP_ENABLED
-              value: "true"
-            - name: SPAN_STORAGE_TYPE
-              value: "badger"
-            - name: BADGER_EPHEMERAL
-              value: "false"
-            - name: BADGER_DIRECTORY_VALUE
-              value: "/badger/data"
-            - name: BADGER_DIRECTORY_KEY
-              value: "/badger/key"
+          image: jaegertracing/jaeger:2.2.0
+          args:
+            - "--config"
+            - "/etc/jaeger/config.yaml"
           ports:
             # Jaeger UI
             - containerPort: 16686
@@ -62,6 +54,8 @@ spec:
           volumeMounts:
             - name: badger-data
               mountPath: /badger
+            - name: config
+              mountPath: /etc/jaeger
           resources:
             requests:
               cpu: 500m
@@ -85,3 +79,6 @@ spec:
         - name: badger-data
           persistentVolumeClaim:
             claimName: jaeger-badger-pvc
+        - name: config
+          configMap:
+            name: jaeger-config

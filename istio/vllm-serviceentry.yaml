@@ -1,0 +1,20 @@
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: vllm-external
+  namespace: catalystlab-shared
+spec:
+  # DNS name that llamastack uses to reach vLLM
+  hosts:
+    - qwen3-next-80b-kserve-workload-svc.kserve-lab.svc.cluster.local
+
+  # This is a mesh-internal service (in kserve-lab namespace)
+  location: MESH_INTERNAL
+
+  ports:
+    - number: 8000
+      name: http
+      protocol: HTTP
+
+  # How to reach the service
+  resolution: DNS

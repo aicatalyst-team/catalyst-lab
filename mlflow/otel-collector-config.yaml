@@ -13,6 +13,16 @@ data:
           http:
             endpoint: "0.0.0.0:4318"
 
+    processors:
+      transform:
+        trace_statements:
+          - context: span
+            statements:
+              # Set peer.service for service graph generation
+              - set(attributes["peer.service"], "vllm") where attributes["http.url"] != nil and IsMatch(attributes["http.url"], ".*qwen3-next-80b.*")
+
+      batch:
+
     exporters:
       otlphttp:
         endpoint: "http://mlflow.catalystlab-shared.svc.cluster.local:5000"
@@ -26,8 +36,14 @@ data:
         tls:
           insecure: true
 
+      otlp/tempo:
+        endpoint: "http://tempo.catalystlab-shared.svc.cluster.local:4317"
+        tls:
+          insecure: true
+
     service:
       pipelines:
         traces:
           receivers: [otlp]
-          exporters: [otlphttp, otlp/jaeger]
+          processors: [transform, batch]
+          exporters: [otlphttp, otlp/jaeger, otlp/tempo]

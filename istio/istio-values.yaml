@@ -1,0 +1,50 @@
+# Istio Control Plane Configuration
+# Helm values for istiod deployment
+
+global:
+  meshID: mesh-default
+  multiCluster:
+    clusterName: catalyst-cluster
+
+# Pilot (istiod) configuration
+pilot:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  # 100% trace sampling for lab environment
+  traceSampling: 100.0
+
+# Mesh configuration
+meshConfig:
+  # Enable distributed tracing
+  enableTracing: true
+
+  # Default trace configuration
+  defaultConfig:
+    tracing:
+      sampling: 100.0
+      # Send traces to Jaeger using Zipkin format
+      zipkin:
+        address: "jaeger-collector.catalystlab-shared.svc.cluster.local:9411"
+
+  # Service discovery
+  defaultServiceExportTo:
+    - "*"
+  defaultVirtualServiceExportTo:
+    - "*"
+  defaultDestinationRuleExportTo:
+    - "*"
+
+# Disable built-in telemetry (using existing Prometheus)
+telemetry:
+  enabled: false
+
+# Sidecar injector configuration
+sidecarInjectorWebhook:
+  enableNamespacesByDefault: false
+  rewriteAppHTTPProbe: true
