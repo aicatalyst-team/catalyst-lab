@@ -39,8 +39,8 @@ All Ready, OTel auto-injected`"]
 
         KAGENT_TOOLS["`**kagent-tools**
 MCP tool server (kubectl, helm)
-{Gap: cluster-admin RBAC --
-needs scoping to read-only + ns-write}`"]
+Scoped RBAC: read-only cluster-wide,
+write in catalystlab-shared`"]
     end
 
     %% ============================================================
@@ -48,13 +48,11 @@ needs scoping to read-only + ns-write}`"]
     %% ============================================================
     subgraph InferenceGW ["Inference Gateway Layer"]
         LLAMASTACK["`**LLaMA Stack**
-image: distribution-starter:latest
+image: quay.io/aicatalyst/llamastack-starter:0.5.1-patched
 Istio sidecar injected (mTLS)
 tool calling: verified
-Agents API: hotfixed (sed patch)
-RAG tool group: registered
-{Gap: RAG needs embedding model
-config update to use qwen3-embedding-8b}
+Agents API: hotfixed (baked in image)
+RAG: embedding provider + pgvector connected
 *ns: catalystlab-shared, :8321*`"]
     end
 

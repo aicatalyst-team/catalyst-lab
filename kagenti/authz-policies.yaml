@@ -7,7 +7,7 @@ spec:
   rules:
     - from:
         - source:
-            namespaces: [kagenti-system, gateway-system, istio-system]
+            namespaces: [kagenti-system, kagent, gateway-system, istio-system]
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

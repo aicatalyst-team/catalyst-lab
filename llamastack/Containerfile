@@ -39,6 +39,17 @@ RUN sed -i \
 RUN sed -i '/dimensions=embedding_dimension,/d' \
     /usr/local/lib/python3.12/site-packages/llama_stack/providers/utils/memory/openai_vector_store_mixin.py
 
+# --- Verify all patches applied successfully ---
+# If upstream changes these files, sed will silently no-op and the build will
+# succeed but the server will crash at runtime. This check fails the build early.
+RUN grep -q "c for c in self.content if c is not None" \
+      /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/types.py \
+  && grep -q "c for c in chat_response_content if c is not None" \
+      /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/streaming.py \
+  && ! grep -q "dimensions=embedding_dimension," \
+      /usr/local/lib/python3.12/site-packages/llama_stack/providers/utils/memory/openai_vector_store_mixin.py \
+  || (echo "ERROR: Patch verification failed — upstream code changed. Review and update patches." && exit 1)
+
 # Entrypoint: opentelemetry-instrument wraps the llama stack server
 # with auto-instrumentation for FastAPI and OpenAI.
 # Config path is passed as an argument at runtime via the deployment manifest.
