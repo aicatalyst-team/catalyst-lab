@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kagenti-ui-pod-reader
+  namespace: catalystlab-shared
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kagenti-ui-pod-reader-binding
+  namespace: catalystlab-shared
+subjects:
+  - kind: ServiceAccount
+    name: kagenti-ui-service-account
+    namespace: kagenti-system
+roleRef:
+  kind: Role
+  name: kagenti-ui-pod-reader
+  apiGroup: rbac.authorization.k8s.io

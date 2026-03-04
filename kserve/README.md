@@ -2,7 +2,20 @@
 
 Installation guide for KServe with the **v0.16.0-master** builds from the aicatalyst repository. This stack provides LLM inference (e.g. vLLM) via Kubernetes InferenceServices and depends on Gateway API, Cert-Manager, Envoy Gateway, Envoy AI Gateway, and LWS.
 
-**Lab context:** KServe / vLLM in this repo is deployed in `kserve-lab`. This README documents how to install the stack from scratch — **do not modify** the live `kserve-lab` deployment without coordination.
+**Lab context:** KServe / vLLM in this repo is deployed in `kserve-lab`. This README documents how to install the stack from scratch -- **do not modify** the live `kserve-lab` deployment without coordination.
+
+## Version Matrix
+
+| Component | Version | Source |
+|-----------|---------|--------|
+| Gateway API CRDs | v1.4.0 | kubernetes-sigs/gateway-api |
+| Cert-Manager | v1.17.2 | cert-manager |
+| Gateway API Inference Extension (GIE) | v1.2.1 | kubernetes-sigs/gateway-api-inference-extension |
+| Envoy Gateway | v1.5.7 | envoyproxy/gateway-helm |
+| Envoy AI Gateway | v0.0.0-latest | envoyproxy/ai-gateway-helm |
+| LeaderWorkerSet (LWS) | v0.7.0 | registry.k8s.io/lws/charts/lws |
+| KServe LLMISvc CRD | v0.16.0-master | quay.io/aicatalyst/kserve-llmisvc |
+| KServe LLMISvc Controller | v0.16.0-master | quay.io/aicatalyst/kserve-llmisvc-controller |
 
 ## Architecture Overview
 
@@ -17,6 +30,13 @@ Installation guide for KServe with the **v0.16.0-master** builds from the aicata
 | KServe CRDs + Controller | `kserve` | InferenceService CRD and controller |
 
 Inference workloads (e.g. vLLM) are typically deployed in a separate namespace such as `kserve-lab` as `InferenceService` resources.
+
+The KServe LLMISvc controller creates the following resources for each `LLMInferenceService` CR:
+
+- **vLLM Deployment** -- model serving pods
+- **llm-d Inference Scheduler (EPP)** -- intelligent request routing (`ghcr.io/llm-d/llm-d-inference-scheduler`)
+- **InferencePool** -- Gateway API Inference Extension resource
+- **Service + HTTPRoute** -- networking
 
 ## Prerequisites
 
@@ -149,3 +169,10 @@ kubectl get pods -n kserve -l app.kubernetes.io/instance=kserve-llmisvc
 - [Cert-Manager](https://cert-manager.io/)
 - [KServe](https://kserve.github.io/website/)
 - Team images: `quay.io/aicatalyst` (KServe controller, etc.)
+
+## Caveats
+
+- Uses aicatalyst custom builds (`v0.16.0-master`), not upstream KServe releases
+- Envoy AI Gateway uses `v0.0.0-latest` -- not a stable release tag
+- Prerequisites must be installed in order -- Gateway API CRDs before Envoy Gateway, etc.
+- The llm-d EPP scheduler is deployed automatically by the controller -- no separate llm-d install needed

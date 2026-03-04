@@ -1,0 +1,14 @@
+# Post-install patch for default-model-config
+# The Helm chart template does not support openAI.baseUrl — apply this patch after install.
+#
+# Usage:
+#   kubectl -n kagent patch modelconfig default-model-config \
+#     --type merge --patch-file kagent/modelconfig-patch.yaml
+#
+# Why: The Helm chart creates a ModelConfig with provider=OpenAI but no baseUrl,
+# defaulting to api.openai.com. We patch it to point at LLaMA Stack's
+# OpenAI-compatible API endpoint.
+
+spec:
+  openAI:
+    baseUrl: "http://llamastack.catalystlab-shared.svc.cluster.local:8321/v1"

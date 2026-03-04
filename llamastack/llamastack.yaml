@@ -29,7 +29,10 @@ spec:
     spec:
       containers:
         - name: llamastack
-          image: llamastack/distribution-starter:0.5.0
+          # Custom image: OTel instrumentation + Agents API hotfix baked in.
+          # See Containerfile for details. Upstream issue: meta-llama/llama-stack#4996
+          image: quay.io/aicatalyst/llamastack-starter:0.5.1-patched
+          imagePullPolicy: Always
           ports:
             - containerPort: 8321
           env:
@@ -41,6 +44,18 @@ spec:
               value: "RedHatAI/Qwen3-Next-80B-A3B-Instruct-FP8"
             - name: VLLM_MAX_TOKENS
               value: "4096"
+            # Embedding model (Qwen3-Embedding-8B via vLLM in kserve-lab)
+            - name: VLLM_EMBEDDING_URL
+              value: "http://qwen3-embedding-8b-kserve-workload-svc.kserve-lab.svc.cluster.local:8000/v1"
+            - name: EMBEDDING_MODEL_NAME
+              value: "Qwen/Qwen3-Embedding-8B"
+            - name: OTEL_SERVICE_NAME
+              value: "llamastack"
+            - name: OTEL_TRACES_EXPORTER
+              value: "otlp"
+            # Auto-instrumentation via CLI wrapper
+            - name: OTEL_PYTHON_DISABLED_INSTRUMENTATIONS
+              value: "urllib3,httpx"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://otel-collector.catalystlab-shared.svc.cluster.local:4317"
             # Enable prompt/completion content capture in OTel log records.

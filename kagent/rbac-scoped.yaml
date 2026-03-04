@@ -1,0 +1,155 @@
+# Scoped RBAC for kagent-tools ServiceAccount
+#
+# Replaces the Helm-managed cluster-admin role with:
+#   - Cluster-wide read access (get, list, watch) for diagnostics
+#   - Write access scoped to catalystlab-shared namespace only
+#
+# Apply after every `helm upgrade`:
+#   kubectl delete clusterrolebinding kagent-tools-cluster-admin-rolebinding
+#   kubectl apply -f kagent/rbac-scoped.yaml
+#
+# See also: kagent/post-upgrade.sh
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kagent-tools-lab-readonly
+  labels:
+    app.kubernetes.io/name: kagent-tools
+    app.kubernetes.io/part-of: kagent
+    app.kubernetes.io/managed-by: catalyst-lab
+rules:
+  # Read-only access to all core API resources
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to apps (deployments, statefulsets, daemonsets, replicasets)
+  - apiGroups: ["apps"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to batch (jobs, cronjobs)
+  - apiGroups: ["batch"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to networking (ingresses, networkpolicies)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to RBAC (roles, rolebindings, clusterroles)
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to storage (storageclasses, pvs, pvcs)
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to autoscaling (hpa)
+  - apiGroups: ["autoscaling"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to policy
+  - apiGroups: ["policy"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to Gateway API resources
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to Istio resources (istio-agent needs this)
+  - apiGroups: ["networking.istio.io", "security.istio.io", "telemetry.istio.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to KServe CRDs
+  - apiGroups: ["serving.kserve.io", "inference.networking.x-k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to Kagent CRDs
+  - apiGroups: ["kagent.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to CNPG
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to Helm releases (helm-agent needs this)
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to Argo Rollouts
+  - apiGroups: ["argoproj.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to Cilium
+  - apiGroups: ["cilium.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to metrics (promql-agent)
+  - apiGroups: ["metrics.k8s.io", "custom.metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Pod logs (essential for diagnostics)
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  # Non-resource URLs (health endpoints, API discovery)
+  - nonResourceURLs: ["*"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kagent-tools-lab-readonly-binding
+  labels:
+    app.kubernetes.io/name: kagent-tools
+    app.kubernetes.io/part-of: kagent
+    app.kubernetes.io/managed-by: catalyst-lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kagent-tools-lab-readonly
+subjects:
+  - kind: ServiceAccount
+    name: kagent-tools
+    namespace: kagent
+---
+# Write access scoped to catalystlab-shared namespace only
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kagent-tools-lab-writer
+  namespace: catalystlab-shared
+  labels:
+    app.kubernetes.io/name: kagent-tools
+    app.kubernetes.io/part-of: kagent
+    app.kubernetes.io/managed-by: catalyst-lab
+rules:
+  # Full CRUD on core resources in this namespace
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets", "services", "pods", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Deployments, statefulsets
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Jobs
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kagent-tools-lab-writer-binding
+  namespace: catalystlab-shared
+  labels:
+    app.kubernetes.io/name: kagent-tools
+    app.kubernetes.io/part-of: kagent
+    app.kubernetes.io/managed-by: catalyst-lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kagent-tools-lab-writer
+subjects:
+  - kind: ServiceAccount
+    name: kagent-tools
+    namespace: kagent

@@ -16,6 +16,11 @@ data:
             base_url: ${env.VLLM_URL}
             max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
             api_token: ${env.VLLM_API_TOKEN:=fake}
+        - provider_id: vllm-embedding
+          provider_type: "remote::vllm"
+          config:
+            base_url: ${env.VLLM_EMBEDDING_URL}
+            api_token: ${env.VLLM_API_TOKEN:=fake}
       vector_io:
         - provider_id: pgvector
           provider_type: "remote::pgvector"
@@ -42,6 +47,9 @@ data:
                 max_write_queue_size: 10000
                 num_writers: 4
       tool_runtime:
+        - provider_id: rag-runtime
+          provider_type: "inline::rag-runtime"
+          config: {}
         - provider_id: model-context-protocol
           provider_type: "remote::model-context-protocol"
           config: {}
@@ -88,9 +96,19 @@ data:
         connectors:
           namespace: connectors
           backend: kv_default
+    tool_groups:
+      - toolgroup_id: "builtin::rag"
+        provider_id: rag-runtime
     models:
       - model_id: "${env.MODEL_NAME}"
         provider_id: vllm
         model_type: llm
+    registered_resources:
+      models:
+        - model_id: "${env.EMBEDDING_MODEL_NAME}"
+          provider_id: vllm-embedding
+          model_type: embedding
+          metadata:
+            embedding_dimension: 4096
     server:
       port: 8321

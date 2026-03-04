@@ -1,12 +1,17 @@
 # OpenTelemetry Collector for catalystlab-shared namespace
-# Receives traces from LLaMA Stack, processes them, and exports to MLflow + Jaeger.
+# Receives traces from LLaMA Stack and Kagent agents, processes them,
+# and exports to MLflow + Jaeger.
 #
-# Pipeline: LLaMA Stack → OTLP (gRPC/HTTP) → [filter → transform] → MLflow + Jaeger
+# Sources:
+#   - LLaMA Stack (inference traces, gen_ai semantic conventions)
+#   - Kagent agents (agent runtime traces, tool calls, LLM interactions)
+#
+# Pipeline: Sources → OTLP (gRPC/HTTP) → [filter → transform → batch] → MLflow + Jaeger + Tempo
 #
 # Key processors:
 #   - filter/drop-probes: Drops readiness/liveness probe spans (GET /v1/models)
 #   - transform: Injects mlflow.spanType from gen_ai semantic conventions,
-#     and sets peer.service for vLLM spans (Jaeger dependency graph)
+#     and sets peer.service for Jaeger dependency graph edges
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -31,6 +36,12 @@ data:
             # Without this filter, probes outnumber real traces ~150:1 within days.
             - 'name == "GET /v1/models"'
             - 'name == "GET /v1/models http send"'
+            # Drop Kagent A2A health check probe spans (controller polls each agent every 15s)
+            # 9 agents × 4 polls/min × 3 spans/poll = ~108 spans/min of noise.
+            - 'name == "GET /.well-known/agent.json"'
+            - 'name == "GET /.well-known/agent.json http send"'
+            - 'name == "GET /.well-known/agent-card.json"'
+            - 'name == "GET /.well-known/agent-card.json http send"'
 
       transform:
         trace_statements:
@@ -43,22 +54,45 @@ data:
               - set(attributes["mlflow.spanType"], "CHAT_MODEL") where attributes["gen_ai.operation.name"] == "chat"
               - set(attributes["mlflow.spanType"], "LLM") where attributes["gen_ai.operation.name"] == "text_completion"
 
-              # --- Jaeger service dependency graph ---
-              # For HTTP spans calling vLLM, set service name and peer.service
-              # so Jaeger's Dependencies view shows llamastack → vllm edges.
-              - set(resource.attributes["service.name"], "vllm") where attributes["http.url"] != nil and IsMatch(attributes["http.url"], ".*qwen3-next-80b.*")
+              # --- Jaeger/Tempo service dependency graph ---
+              # LLaMA Stack → vLLM edges: the openai-v2 instrumentation on LLaMA Stack
+              # emits "chat" spans with server.address pointing at the vLLM service.
+              # Match on server.address (new OTel semconv) for the outbound LLM call.
+              - set(attributes["peer.service"], "vllm") where attributes["server.address"] != nil and IsMatch(attributes["server.address"], ".*qwen3-next-80b.*")
+              # Also match embedding model calls to vLLM
+              - set(attributes["peer.service"], "vllm-embedding") where attributes["server.address"] != nil and IsMatch(attributes["server.address"], ".*qwen3-embedding.*")
+              # Legacy: match http.url for any direct HTTP spans to vLLM (e.g., probe checks)
               - set(attributes["peer.service"], "vllm") where attributes["http.url"] != nil and IsMatch(attributes["http.url"], ".*qwen3-next-80b.*")
+
+              # --- Kagent agent → LLaMA Stack dependency edges ---
+              # Kagent agents call LLaMA Stack's OpenAI-compatible API.
+              # Set peer.service on spans with URLs pointing at LLaMA Stack
+              # so Jaeger/Tempo show agent → llamastack edges.
+              - set(attributes["peer.service"], "llamastack") where attributes["http.url"] != nil and IsMatch(attributes["http.url"], ".*llamastack.*8321.*")
+              - set(attributes["peer.service"], "llamastack") where attributes["url.full"] != nil and IsMatch(attributes["url.full"], ".*llamastack.*8321.*")
+              - set(attributes["peer.service"], "llamastack") where attributes["server.address"] != nil and IsMatch(attributes["server.address"], ".*llamastack.*")
+
+      batch:
 
     exporters:
       # MLflow trace ingestion endpoint (experiment ID 1 = "llamastack-traces")
-      otlphttp:
+      # Renamed from deprecated "otlphttp" to "otlp_http"
+      otlp_http:
         endpoint: "http://mlflow.catalystlab-shared.svc.cluster.local:5000"
         headers:
           x-mlflow-experiment-id: "1"
 
       # Jaeger for distributed trace visualization and dependency graphs
-      otlp/jaeger:
+      # Renamed from deprecated "otlp/jaeger" to "otlp_grpc/jaeger"
+      otlp_grpc/jaeger:
         endpoint: "http://jaeger-collector.catalystlab-shared.svc.cluster.local:4317"
+        tls:
+          insecure: true
+
+      # Tempo for Grafana-native tracing (service graphs, node graph, dashboards)
+      # Deployed by Gerald (2026-02-24). Grafana datasource already configured.
+      otlp_grpc/tempo:
+        endpoint: "http://tempo.catalystlab-shared.svc.cluster.local:4317"
         tls:
           insecure: true
 
@@ -66,8 +100,8 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [filter/drop-probes, transform]
-          exporters: [otlphttp, otlp/jaeger]
+          processors: [filter/drop-probes, transform, batch]
+          exporters: [otlp_http, otlp_grpc/jaeger, otlp_grpc/tempo]
 ---
 apiVersion: apps/v1
 kind: Deployment

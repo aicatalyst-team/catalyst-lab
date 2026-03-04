@@ -306,21 +306,15 @@ curl -X POST http://mlflow.<CLUSTER_IP>.nip.io/api/2.0/mlflow/experiments/create
 {"experiment_id": "1"}
 ```
 
-### 2. Update OTel Collector Config
+### 2. Deploy OTel Collector
 
-Edit [otel-collector-config.yaml](otel-collector-config.yaml) and replace the placeholder experiment ID:
-
-```yaml
-headers:
-  x-mlflow-experiment-id: "1"  # Replace with actual ID from step 1
-```
-
-### 3. Deploy OTel Collector
+The canonical OTel collector config is in [`../otel-collector/otel-collector.yaml`](../otel-collector/otel-collector.yaml), not the simplified copy in this directory.
 
 ```bash
-kubectl apply -f otel-collector-config.yaml
-kubectl apply -f otel-collector.yaml
+kubectl apply -f ../otel-collector/otel-collector.yaml
 ```
+
+The canonical config includes probe filtering, MLflow spanType injection, and fan-out to MLflow + Jaeger + Tempo. See [`../otel-collector/README.md`](../otel-collector/README.md) for details.
 
 Verify the OTel Collector is running:
 
@@ -566,6 +560,29 @@ See [../jaeger/README.md](../jaeger/README.md) for complete Jaeger deployment in
 
 ⚠️ Jaeger deployment requires security review. See [Jaeger Security Considerations](../jaeger/README.md#security-considerations) for details.
 
+## Operational Notes
+
+### Current State (as of 2026-03-01)
+
+| Property | Value |
+|----------|-------|
+| Namespace | `catalystlab-shared` |
+| Image | `ghcr.io/mlflow/mlflow:latest-full` |
+| Internal URL | `mlflow.catalystlab-shared.svc.cluster.local:5000` |
+| Backend store | PostgreSQL `mlflow` database on `pgvector-cluster-rw` |
+| Artifact store | PVC `/mlflow/artifacts` (10Gi, `local-path`) |
+| Experiment | `llamastack-traces` -- ID **1** (active, receiving traces) |
+
+### Known Limitations
+
+- **Request/response preview columns are empty** -- `opentelemetry-instrumentation-openai-v2` v2.3b0 emits content via OTel EventLogger (log records), not span events. MLflow only reads span events/attributes. Blocked on upstream adoption of `SPAN_AND_EVENT` mode from `opentelemetry-util-genai`.
+- **Span type column** -- Fixed via OTTL transform in the OTel collector (`mlflow.spanType` injected from `gen_ai.operation.name`).
+- **Token usage IS present** -- `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `mlflow.chat.tokenUsage` are populated on spans.
+
+### OTel Collector Ownership
+
+The OTel collector config for `catalystlab-shared` is managed in [`../otel-collector/otel-collector.yaml`](../otel-collector/otel-collector.yaml). Do not modify the simplified copy at `mlflow/otel-collector-config.yaml` -- it is deprecated and missing critical processors.
+
 ## References
 
 - [MLflow Documentation](https://mlflow.org/docs/latest/index.html)
@@ -573,3 +590,4 @@ See [../jaeger/README.md](../jaeger/README.md) for complete Jaeger deployment in
 - [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
 - [LLaMA Stack](https://github.com/meta-llama/llama-stack)
 - [Jaeger Documentation](https://www.jaegertracing.io/docs/latest/) (optional integration)
+- [Grafana Tempo](https://grafana.com/docs/tempo/latest/) (optional integration)

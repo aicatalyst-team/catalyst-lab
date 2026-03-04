@@ -1,0 +1,30 @@
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: kagenti-access
+  namespace: catalystlab-shared
+spec:
+  rules:
+    - from:
+        - source:
+            namespaces: [kagenti-system, kagent, gateway-system, istio-system]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: peer-agents
+  namespace: catalystlab-shared
+spec:
+  rules:
+    - from:
+        - source:
+            namespaces: [catalystlab-shared]
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: mtls-strict
+  namespace: catalystlab-shared
+spec:
+  mtls:
+    mode: STRICT

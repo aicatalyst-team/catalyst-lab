@@ -1,0 +1,57 @@
+# Custom LLaMA Stack image for AI Catalyst Lab
+# Pins the upstream image and bakes in OTel instrumentation + Agents API hotfix.
+# Eliminates fragile runtime pip install and sed patches.
+#
+# Build:
+#   podman build -t quay.io/aicatalyst/llamastack-starter:0.5.1-patched -f Containerfile .
+# Push:
+#   podman push quay.io/aicatalyst/llamastack-starter:0.5.1-patched
+
+FROM docker.io/llamastack/distribution-starter@sha256:9f83d467ac874a3a4ca882485736ba2b4d63f5ccdc4cf1b9519e3123c92f790e
+
+# --- OTel auto-instrumentation dependencies ---
+# The upstream image dropped sitecustomize.py-based auto-instrumentation.
+# We install the packages needed for the opentelemetry-instrument CLI wrapper
+# to instrument FastAPI (HTTP spans) and OpenAI (LLM call spans).
+RUN pip install --no-cache-dir \
+    opentelemetry-instrumentation-fastapi \
+    opentelemetry-instrumentation-openai-v2
+
+# --- Agents API hotfix (meta-llama/llama-stack#4996) ---
+# The Agents API (/v1/responses) crashes on "".join([None]) when tool calling
+# returns None content. We patch types.py and streaming.py to filter out None.
+RUN sed -i \
+    's/return "".join(self.content)/return "".join(c for c in self.content if c is not None)/g' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/types.py \
+  && sed -i \
+    's/final_text = "".join(chat_response_content)/final_text = "".join(c for c in chat_response_content if c is not None)/g' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/streaming.py \
+  && sed -i \
+    's/accumulated_text = "".join(chat_response_content)/accumulated_text = "".join(c for c in chat_response_content if c is not None)/g' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/streaming.py
+
+# --- vLLM embedding dimensions compatibility fix ---
+# LLaMA Stack always passes `dimensions=N` to the embedding API, but vLLM
+# rejects explicit dimensions for non-matryoshka models (even when N matches
+# the native dimension). We remove the dimensions parameter so vLLM uses its
+# native output dimension. This is safe because pgvector stores whatever
+# dimension the model outputs.
+RUN sed -i '/dimensions=embedding_dimension,/d' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/providers/utils/memory/openai_vector_store_mixin.py
+
+# --- Verify all patches applied successfully ---
+# If upstream changes these files, sed will silently no-op and the build will
+# succeed but the server will crash at runtime. This check fails the build early.
+RUN grep -q "c for c in self.content if c is not None" \
+      /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/types.py \
+  && grep -q "c for c in chat_response_content if c is not None" \
+      /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/streaming.py \
+  && ! grep -q "dimensions=embedding_dimension," \
+      /usr/local/lib/python3.12/site-packages/llama_stack/providers/utils/memory/openai_vector_store_mixin.py \
+  || (echo "ERROR: Patch verification failed — upstream code changed. Review and update patches." && exit 1)
+
+# Entrypoint: opentelemetry-instrument wraps the llama stack server
+# with auto-instrumentation for FastAPI and OpenAI.
+# Config path is passed as an argument at runtime via the deployment manifest.
+ENTRYPOINT ["opentelemetry-instrument", "llama", "stack", "run"]
+CMD ["/etc/llama-stack/config.yaml"]

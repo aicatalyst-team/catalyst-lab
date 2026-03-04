@@ -1,49 +1,10 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: otel-collector-config
-  namespace: catalystlab-shared
-data:
-  config.yaml: |
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: "0.0.0.0:4317"
-          http:
-            endpoint: "0.0.0.0:4318"
-
-    processors:
-      transform:
-        trace_statements:
-          - context: span
-            statements:
-              # Set peer.service for service graph generation
-              - set(attributes["peer.service"], "vllm") where attributes["http.url"] != nil and IsMatch(attributes["http.url"], ".*qwen3-next-80b.*")
-
-      batch:
-
-    exporters:
-      otlphttp:
-        endpoint: "http://mlflow.catalystlab-shared.svc.cluster.local:5000"
-        headers:
-          # IMPORTANT: Replace "1" with actual experiment ID after creating experiment
-          # Create experiment: POST /api/2.0/mlflow/experiments/create {"name": "llamastack-traces"}
-          x-mlflow-experiment-id: "1"
-
-      otlp/jaeger:
-        endpoint: "http://jaeger-collector.catalystlab-shared.svc.cluster.local:4317"
-        tls:
-          insecure: true
-
-      otlp/tempo:
-        endpoint: "http://tempo.catalystlab-shared.svc.cluster.local:4317"
-        tls:
-          insecure: true
-
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [transform, batch]
-          exporters: [otlphttp, otlp/jaeger, otlp/tempo]
+# DEPRECATED: This file is superseded by ../otel-collector/otel-collector.yaml
+#
+# The canonical OTel collector configuration lives in otel-collector/otel-collector.yaml
+# and includes critical processors missing from this copy:
+#   - filter/drop-probes (without this, probe spans outnumber real traces 150:1)
+#   - MLflow spanType OTTL transform (populates the Span Type column)
+#   - Kagent agent peer.service transforms (Jaeger dependency graph edges)
+#   - Non-deprecated exporter aliases (otlp_http, otlp_grpc/*)
+#
+# Do not apply this file directly. Use otel-collector/otel-collector.yaml instead.

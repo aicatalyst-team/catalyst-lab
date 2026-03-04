@@ -1,0 +1,61 @@
+# Kagent Helm chart values for Catalyst Lab
+# Chart: oci://ghcr.io/kagent-dev/kagent/helm/kagent
+# Version: 0.7.18
+#
+# Usage:
+#   helm install kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent \
+#     --namespace kagent --version 0.7.18 -f values.yaml
+#
+# Prerequisites:
+#   1. Install CRDs first:
+#      helm install kagent-crds oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds \
+#        --namespace kagent --create-namespace --version 0.7.18
+#
+#   2. Create API key secret (LLaMA Stack accepts any non-empty key):
+#      kubectl create secret generic kagent-openai -n kagent \
+#        --from-literal=OPENAI_API_KEY="catalyst-lab-internal"
+
+# LLM Provider — routed through LLaMA Stack to Qwen3-Next-80B via vLLM
+providers:
+  default: openAI
+  openAI:
+    provider: OpenAI
+    model: "vllm/RedHatAI/Qwen3-Next-80B-A3B-Instruct-FP8"  # pragma: allowlist secret
+    apiKeySecretRef: kagent-openai  # pragma: allowlist secret
+    apiKeySecretKey: OPENAI_API_KEY  # pragma: allowlist secret
+
+# OpenTelemetry — export traces to our OTel Collector
+# Controller injects OTEL_* env vars into all agent pods automatically.
+# Logging disabled — OTel collector has no logs pipeline (only traces).
+# Agent pod logs are still available via kubectl logs.
+otel:
+  tracing:
+    enabled: true
+    exporter:
+      otlp:
+        endpoint: "http://otel-collector.catalystlab-shared.svc.cluster.local:4317"
+        timeout: 15
+        insecure: true
+  logging:
+    enabled: false
+
+# Tools configuration
+tools:
+  grafana-mcp:
+    enabled: true
+  querydoc:
+    # Requires OpenAI API key for embeddings — disabled until we have one
+    enabled: false
+
+# Grafana MCP — connects observability-agent to the lab Grafana instance
+# Prerequisites:
+#   kubectl -n kagent create secret generic kagent-grafana-token \
+#     --from-literal=GRAFANA_SERVICE_ACCOUNT_TOKEN="$(kubectl -n monitoring create token prometheus-stack-grafana --duration=8760h)"
+grafana-mcp:
+  grafana:
+    url: "http://prometheus-stack-grafana.monitoring.svc.cluster.local:80/api"
+    secretRef: "kagent-grafana-token"  # pragma: allowlist secret
+
+# All 10 built-in agents enabled (default)
+# Each agent references default-model-config (Helm-managed)
+# Agent pods run cr.kagent.dev/kagent-dev/kagent/app:0.7.18
