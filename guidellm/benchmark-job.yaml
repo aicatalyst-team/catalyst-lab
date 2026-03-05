@@ -1,3 +1,20 @@
+# GuideLLM Benchmark Job
+#
+# Runs inference benchmarks against LLaMA Stack and stores results on a PVC.
+# Results can be uploaded to MLflow via scripts/guidellm_to_mlflow.py.
+#
+# Before applying, replace placeholders:
+#   <LLAMASTACK_ENDPOINT>  e.g. http://llamastack.catalystlab-shared.svc.cluster.local:8321
+#   <MODEL_NAME>           e.g. RedHatAI/Qwen3-Next-80B-A3B-Instruct-FP8
+#   <HF_MODEL_ID>          e.g. RedHatAI/Qwen3-Next-80B-A3B-Instruct-FP8
+#   <CONCURRENCY>          e.g. 1, 2, 4, or 8 (for constant profile)
+#   <DURATION_SECONDS>     e.g. 60, 120, 180
+#
+# For a concurrency sweep, run this job multiple times with different
+# <CONCURRENCY> values and unique job names:
+#   kubectl apply -f benchmark-job.yaml  # after editing placeholders
+#   kubectl delete job guidellm-benchmark-c1 -n guide-llm  # cleanup before re-run
+#
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -15,22 +32,24 @@ spec:
             - "benchmark"
             - "run"
             - "--target"
-            - "http://<inference-endpoint>:<port>"
+            - "<LLAMASTACK_ENDPOINT>"
             - "--model"
-            - "<model-name>"
+            - "<MODEL_NAME>"
             - "--data"
-            - "prompt_tokens=512,output_tokens=256"
+            # GuideLLM requires JSON format for synthetic data config
+            - '{"prompt_tokens": 128, "output_tokens": 64}'
+            - "--rate"
+            - "<CONCURRENCY>"
             - "--profile"
-            - "sweep"
-            - "--detect-saturation"
+            - "constant"
             - "--max-seconds"
-            - "180"
+            - "<DURATION_SECONDS>"
             - "--output-dir"
             - "/results"
             - "--outputs"
-            - "json,csv,html"
+            - "json,csv"
             - "--processor"
-            - "<hf-model-id>"
+            - "<HF_MODEL_ID>"
             - "--backend-kwargs"
             - '{"validate_backend": false}'
           volumeMounts:

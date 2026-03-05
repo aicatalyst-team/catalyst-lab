@@ -1,251 +1,192 @@
 # Catalyst Lab Architecture
 
-This document describes the architecture of the Catalyst Lab Kubernetes infrastructure for LLM deployment, benchmarking, and observability.
+This document describes the deployed architecture of the AI Catalyst Lab -- a multi-tenant Kubernetes environment for LLM inference, agent orchestration, RAG, and end-to-end observability.
 
-## System Architecture
+> **Authoritative diagram:** [`diagrams/lab-architecture.md`](./diagrams/lab-architecture.md) contains the full Mermaid diagram with node/edge reference tables and gap tracking.
+
+## System Overview
 
 ```mermaid
 graph LR
-    %% Users
-    User(["👤 User"])
-    Admin(["👨‍💼 Administrator"])
+    Clients["Clients
+    Open WebUI, Kagent UI,
+    GuideLLM, curl/SDK"]
 
-    %% Frontend Layer
-    subgraph Frontend["🎨 Frontend Layer"]
-        WebUI["WebUI<br/>Llama-Stack Client"]
-    end
+    Agents["Agent Layer
+    Kagent v0.7.18
+    11 agents (CRD-based)
+    A2A protocol, OTel auto-injected"]
 
-    %% Orchestration Layer
-    subgraph Orchestration["🤖 Orchestration & Agents"]
-        direction TB
-        Kagenti["Kagenti<br/>K8s Agent Orchestrator"]
-        BeeAI["BeeAI Agent<br/>Kagenti CRD<br/>A2A Port: 9999"]
-        AgenticBench["Agentic Benchmark<br/>TravelPlanner<br/>VendingBench"]
-    end
+    Gateway["Inference Gateway
+    LLaMA Stack 0.5.1-patched
+    OpenAI-compat API
+    Tool calling, RAG"]
 
-    %% LLM Inference Layer
-    subgraph LLMInference["🚀 LLM Inference Stack"]
-        direction TB
-        LlamaStack["LLAMA-STACK Server<br/>Main Orchestrator"]
-        KServe["KServe<br/>Model Serving Platform"]
-        LlmdScheduler["llm-d Scheduler<br/>Workload Manager"]
-        LlmdVLLM["llm-d vLLM<br/>Inference Engine"]
-    end
+    Models["Model Serving
+    KServe + llm-d EPP
+    Qwen3-Next-80B (TP=2)
+    Qwen3-Embedding-8B"]
 
-    %% MCP Integration Layer
-    subgraph MCPServers["🔌 MCP Integration Layer"]
-        direction TB
-        KuadrantMCP["Kuadrant Gateway<br/>MCP Router"]
-        GitHubMCP["GitHub MCP<br/>Source Control"]
-        JiraMCP["Jira MCP<br/>Project Mgmt"]
-        SearchMCP["Search MCP<br/>Web Search"]
-        BenchmarkMCP["Benchmark MCP<br/>Performance"]
-    end
+    Data["Data Layer
+    PostgreSQL (CNPG)
+    pgvector (RAG)
+    3 databases"]
 
-    %% Storage Layer
-    subgraph Storage["💾 Data Storage Layer"]
-        direction TB
-        PgVector["PgVector<br/>Vector Embeddings<br/>HNSW Index"]
-        Posgresql["PostgreSQL 17<br/>Primary Database<br/>CloudNativePG"]
-    end
+    Observability["Observability
+    OTel Collector (3-way fan-out)
+    MLflow + Jaeger + Tempo
+    Grafana, Kiali, Prometheus"]
 
-    %% Observability Layer
-    subgraph Observability["📊 Observability & Monitoring"]
-        direction TB
-        MLFlow["MLFlow<br/>LLM Trace Collection<br/>Experiment Tracking"]
-        VisualMLFlow["Visual MLFlow<br/>TBD - Visualization"]
-        GrafanaDash["Grafana<br/>Monitoring Dashboards"]
-        OtelPrometheus["OpenTelemetry<br/>+ Prometheus<br/>Metrics Collection"]
-    end
+    Clients --> Agents
+    Clients --> Gateway
+    Agents --> Gateway
+    Gateway --> Models
+    Gateway --> Data
+    Gateway --> Observability
+    Agents --> Observability
 
-    %% External Services
-    subgraph External["🌐 External Services"]
-        direction TB
-        Github["GitHub API"]
-        Jira["Jira API"]
-        BraveSearch["Brave Search API"]
-    end
-
-    %% User Interactions
-    User -->|"Web Interface"| WebUI
-    User -->|"Run Benchmarks"| AgenticBench
-    Admin -->|"Monitor"| GrafanaDash
-
-    %% Frontend to Core
-    WebUI <-->|"API Calls"| LlamaStack
-
-    %% Orchestration Flow
-    AgenticBench -->|"Trigger Tasks"| Kagenti
-    Kagenti -->|"Deploy Agents"| BeeAI
-    Kagenti -->|"Send Traces"| VisualMLFlow
-    BeeAI -->|"LLM Requests"| LlamaStack
-
-    %% LLM Inference Flow
-    LlamaStack -->|"Vector Search"| PgVector
-    LlamaStack -->|"Store Data"| Posgresql
-    LlamaStack -->|"Inference Requests"| KServe
-    KServe -->|"Schedule"| LlmdScheduler
-    KServe -->|"Execute"| LlmdVLLM
-    LlmdScheduler -->|"Assign"| LlmdVLLM
-
-    %% MCP Gateway Integration
-    LlamaStack -->|"Tool Calls"| KuadrantMCP
-    KuadrantMCP <-->|"Route"| GitHubMCP
-    KuadrantMCP <-->|"Route"| JiraMCP
-    KuadrantMCP <-->|"Route"| SearchMCP
-    KuadrantMCP <-->|"Route"| BenchmarkMCP
-
-    %% External Connections
-    GitHubMCP <-->|"REST API"| Github
-    JiraMCP <-->|"REST API"| Jira
-    SearchMCP <-->|"Search API"| BraveSearch
-
-    %% Observability Flow
-    VisualMLFlow -->|"Visualize"| MLFlow
-    MLFlow -->|"Store Traces"| Posgresql
-    MLFlow <-->|"Collect Traces"| LlamaStack
-    OtelPrometheus -->|"Scrape Metrics"| LlamaStack
-    OtelPrometheus -->|"Scrape Metrics"| KServe
-    GrafanaDash -->|"Query"| OtelPrometheus
-    Kagenti -->|"Send Metrics"| MLFlow
-
-    %% Styling with better visibility
-    classDef userStyle fill:#4A90E2,stroke:#2E5C8A,stroke-width:3px,color:#fff
-    classDef frontendStyle fill:#E8F4F8,stroke:#4A90E2,stroke-width:2px,color:#000
-    classDef orchestrationStyle fill:#FFE066,stroke:#CC9900,stroke-width:3px,color:#000
-    classDef inferenceStyle fill:#90EE90,stroke:#2D7A2D,stroke-width:3px,color:#000
-    classDef storageStyle fill:#E8E8E8,stroke:#666,stroke-width:2px,color:#000
-    classDef mcpStyle fill:#DDA0DD,stroke:#8B008B,stroke-width:2px,color:#000
-    classDef observabilityStyle fill:#FF6B6B,stroke:#CC0000,stroke-width:3px,color:#fff
-    classDef externalStyle fill:#F0F0F0,stroke:#999,stroke-width:2px,color:#000
-
-    class User,Admin userStyle
-    class WebUI frontendStyle
-    class Kagenti,BeeAI,AgenticBench orchestrationStyle
-    class KServe,LlmdScheduler,LlmdVLLM,LlamaStack inferenceStyle
-    class PgVector,Posgresql storageStyle
-    class KuadrantMCP,GitHubMCP,JiraMCP,SearchMCP,BenchmarkMCP mcpStyle
-    class MLFlow,VisualMLFlow,GrafanaDash,OtelPrometheus observabilityStyle
-    class Jira,Github,BraveSearch externalStyle
+    style Clients fill:#E8F4F8,stroke:#4A90E2,stroke-width:2px
+    style Agents fill:#FFE066,stroke:#CC9900,stroke-width:2px
+    style Gateway fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style Models fill:#90EE90,stroke:#2D7A2D,stroke-width:2px
+    style Data fill:#E8E8E8,stroke:#666,stroke-width:2px
+    style Observability fill:#FF6B6B,stroke:#CC0000,stroke-width:2px,color:#fff
 ```
 
-## Component Descriptions
+## Components
 
-### Frontend Layer
+### Agent Layer (namespace: `kagent`)
 
-- **WebUI (Llama-Stack Client)**: User-facing interface for interacting with the LLM inference stack
+**Kagent v0.7.18** (CNCF Sandbox) provides Kubernetes-native agent orchestration via CRDs.
 
-### Orchestration & Agents
+- **Controller** -- deploys each Agent CRD as a pod, injects OTel environment variables automatically, exposes A2A (Agent-to-Agent) endpoints
+- **11 agents** -- 10 built-in (k8s, istio, helm, promql, kgateway, argo-rollouts, observability, 3x cilium) + 1 custom (`labdemo-agent` for lab operations)
+- **kagent-tools** -- MCP tool server providing kubectl and helm access; RBAC scoped to read-only cluster-wide + write in `catalystlab-shared`
+- **Kagent UI** -- web interface for agent interaction via A2A JSON-RPC
 
-- **Kagenti**: Kubernetes-native agent orchestration system
-- **BeeAI Agent**: AI agent implementation using Kagenti CRD, exposes Agent-to-Agent (A2A) interface on port 9999
+All 11 agents are Ready and producing OTel traces. Each agent query generates 90-200+ spans depending on tool call depth.
 
-### Storage Layer
+### Inference Gateway (namespace: `catalystlab-shared`)
 
-- **PgVector**: PostgreSQL with pgvector extension for vector embeddings and similarity search
-- **PostgreSQL**: Primary database for storing application data, traces, and metadata
+**LLaMA Stack 0.5.1** runs as the unified API gateway for inference, tool calling, agentic workflows, and RAG.
 
-### LLM Inference
+- **Custom image** (`quay.io/aicatalyst/llamastack-starter:0.5.1-patched`) bakes in:
+  - OTel auto-instrumentation (removed from upstream `latest`)
+  - Agents API hotfix (NoneType crash when vLLM returns `content: null` with tool calls)
+  - vLLM embedding dimensions compatibility fix (non-matryoshka `dimensions` rejection)
+- **RAG pipeline** -- embedding via Qwen3-Embedding-8B, vector storage in pgvector, semantic search verified end-to-end
+- **Istio sidecar** injected for mTLS between services
+- **PostgreSQL-backed state** -- KV store, SQL store, and vector store all persist across restarts
 
-- **LLAMA-STACK Server**: Core LLM inference orchestration server
-- **KServe**: Kubernetes-native model serving platform for ML inference
-- **llm-d Scheduler**: Custom scheduler for LLM workload management
-- **llm-d vLLM**: vLLM engine for efficient LLM inference
+### Model Serving (namespace: `kserve-lab`)
 
-### MCP Servers (Model Context Protocol)
+**KServe v0.16.0** with **llm-d inference scheduler** manages vLLM deployments.
 
-- **Kuadrant MCP Gateway**: Central gateway for routing MCP requests
-- **GitHub MCP Server**: Integration with GitHub APIs
-- **Jira MCP Server**: Integration with Jira project management
-- **Search MCP Server**: Web search integration (Brave Search)
-- **Benchmark MCP Server**: Benchmarking service integration
+| Model | Purpose | Config |
+|-------|---------|--------|
+| **Qwen3-Next-80B-A3B-Instruct-FP8** | Chat + tool calling | 1 replica, TP=2, hermes parser |
+| **Qwen3-Embedding-8B** | Embeddings for RAG | 1 replica, 4096 dimensions |
 
-### Observability & Monitoring
+- **llm-d EPP** routes requests via Envoy ext-proc. Basic routing active; advanced features (P/D disaggregation, KV offload, variant autoscaling) not configured.
 
-- **MLFlow**: LLM trace collection and experiment tracking
-- **Visual For MLFlow**: Visualization layer for MLFlow data (TBD)
-- **Grafana Dashboard**: Monitoring dashboards for administrators
-- **OTel+Prometheus**: OpenTelemetry and Prometheus for metrics collection
+### Observability
+
+The observability stack provides four complementary views of the same trace data.
+
+**OTel Collector** (namespace: `catalystlab-shared`) receives OTLP from all instrumented services and performs:
+1. **Filtering** -- drops readiness/liveness probe spans and A2A health check spans (eliminates 108+ noise spans/min)
+2. **Transform** -- injects `mlflow.spanType` from `gen_ai.operation.name`, sets `peer.service` for dependency graph edges
+3. **3-way fan-out** -- exports to MLflow, Jaeger, and Tempo simultaneously
+
+| Tool | Namespace | Purpose | Strength |
+|------|-----------|---------|----------|
+| **MLflow** | catalystlab-shared | Experiment tracking, trace storage | Span type analysis, experiment comparison |
+| **Jaeger** | catalystlab-shared | Trace tree visualization | Deep trace inspection, 12-service dependency graph |
+| **Tempo** | catalystlab-shared | Grafana-native tracing | Service graph via metrics generator, node graph panel |
+| **Grafana** | monitoring | Dashboards | 10-panel "AI Catalyst Lab Overview" dashboard |
+| **Kiali** | kiali | Istio mesh topology | Animated service graph, traffic flow visualization |
+| **Prometheus** | monitoring | Metrics | Tempo service graph metrics via remote write |
+
+### Data Layer (namespace: `catalystlab-shared`)
+
+**PostgreSQL 17** via CloudNativePG operator, 1 replica with pgvector extension.
+
+| Database | Consumer | Purpose |
+|----------|----------|---------|
+| `vectordb` | LLaMA Stack vector_io | RAG vector embeddings (4096-dim, sequential scan) |
+| `llamastack` | LLaMA Stack | KV store, SQL store, agent state |
+| `mlflow` | MLflow | Experiment metadata, trace storage |
 
 ### Benchmarking
 
-- **Agentic Benchmark**: Benchmark suite including TravelPlanner and VendingBench for evaluating agentic AI systems
-
-### External Services
-
-- **GitHub**: Source code repository integration
-- **Jira**: Project management and issue tracking
-- **Brave Search**: Web search API for information retrieval
+**GuideLLM** runs as Kubernetes Jobs in the `guide-llm` namespace. Results are uploaded to MLflow via `scripts/guidellm_to_mlflow.py` for experiment comparison.
 
 ## Data Flow
 
-### User Request Flow
+### Inference Request Flow
 
-1. User interacts with **WebUI**
-2. WebUI sends requests to **LLAMA-STACK Server**
-3. LLAMA-STACK routes inference requests to **KServe**
-4. KServe uses **llm-d scheduler** to manage workload placement
-5. Inference is executed by **llm-d vLLM** engine
-6. Results are returned to the user via LLAMA-STACK and WebUI
+1. Client sends request to **LLaMA Stack** (`:8321`, OpenAI-compatible API)
+2. LLaMA Stack routes to **llm-d EPP** (`workload-svc:8000`)
+3. EPP routes via Envoy ext-proc to **vLLM** (Qwen3-Next-80B)
+4. vLLM returns generated tokens back through the chain
 
-### Agent Orchestration Flow
+### Agent Request Flow
 
-1. **Agentic Benchmark** triggers tasks via **Kagenti**
-2. Kagenti orchestrates **BeeAI Agent** instances
-3. BeeAI communicates with **LLAMA-STACK** for LLM capabilities
-4. LLAMA-STACK accesses external services via **MCP Gateway**
-5. MCP servers interact with external APIs (GitHub, Jira, Search)
+1. User interacts via **Kagent UI** (A2A JSON-RPC)
+2. Kagent agent calls **LLaMA Stack** OpenAI-compatible API
+3. LLaMA Stack executes inference + tool calls (may loop multiple times)
+4. Agent returns structured response via A2A
+
+### RAG Flow
+
+1. Documents uploaded via LLaMA Stack Files API
+2. LLaMA Stack chunks documents, calls **Qwen3-Embedding-8B** for embeddings
+3. Embeddings stored in **pgvector** (`vectordb` database)
+4. Semantic search queries embed the query, perform vector similarity search, return context
 
 ### Observability Flow
 
-1. **LLAMA-STACK** and **KServe** emit OpenTelemetry traces
-2. **OTel+Prometheus** collects metrics and traces
-3. **MLFlow** captures LLM-specific traces and logs
-4. **Grafana Dashboard** visualizes metrics for administrators
-5. **Visual For MLFlow** provides LLM trace visualization
+1. **LLaMA Stack** and **Kagent agents** emit OTLP traces to OTel Collector (`:4317`)
+2. OTel Collector filters probe noise, transforms span attributes, batches
+3. Fan-out to **MLflow** (OTLP/HTTP), **Jaeger** (OTLP/gRPC), **Tempo** (OTLP/gRPC)
+4. **Tempo** pushes service graph metrics to **Prometheus** via remote write
+5. **Grafana** queries Prometheus + Tempo for dashboard panels
+6. **Kiali** reads Istio mesh topology independently
+
+## Known Limitations
+
+| Limitation | Impact | Status |
+|------------|--------|--------|
+| MLflow request/response preview empty | Cannot inspect prompt/completion in MLflow UI | Blocked on upstream openai-v2 `SPAN_AND_EVENT` mode |
+| Jaeger content inspection not working | Cannot view span content in Jaeger | Needs LoggerProvider + logs pipeline |
+| pgvector 2000-dim ANN index limit | 4096-dim embeddings use sequential scan | Acceptable for demo; consider lower-dim model for production |
+| llm-d advanced features not configured | Basic routing only | P/D disaggregation, KV offload deferred |
 
 ## Deployment Considerations
 
 ### Resource Requirements
 
-- **LLM Inference (vLLM)**: GPU-enabled nodes required
-- **PostgreSQL/PgVector**: Persistent storage with high I/O performance
-- **Observability Stack**: Moderate CPU/memory for metrics aggregation
-- **MCP Servers**: Lightweight, can run on standard nodes
+- **vLLM (Qwen3-Next-80B)**: 2 GPUs (tensor parallelism), GPU-enabled nodes required
+- **vLLM (Qwen3-Embedding-8B)**: 1 GPU
+- **PostgreSQL**: Persistent storage with adequate I/O
+- **All other components**: Standard CPU/memory, no GPU required
 
-### Network Architecture
+### Security
 
-- Internal service-to-service communication within Kubernetes cluster
-- External ingress for WebUI and administrative interfaces
-- Secure connectivity to external APIs (GitHub, Jira, Brave Search)
-- A2A communication on port 9999 for agent interactions
+- **Istio mTLS** between services in `catalystlab-shared`
+- **Scoped RBAC** for kagent-tools (read-only cluster-wide, write in `catalystlab-shared`)
+- **Istio AuthorizationPolicy** for namespace-level access control
+- **Secret management** via `secretKeyRef` / `configMapKeyRef` in all manifests
+- **Pre-commit hooks** prevent committing credentials, IPs, and sensitive data
 
-### Storage Strategy
+### Multi-Tenancy
 
-- **PgVector**: Vector embeddings storage (20Gi default)
-- **PostgreSQL**: Application data, traces, MLFlow experiments
-- **Benchmark Results**: Persistent volume claims for GuideLLM outputs
+This is a shared cluster. Component ownership:
 
-## Security Considerations
-
-- Network policies for service isolation
-- Secret management for external API credentials
-- RBAC for Kubernetes resource access
-- TLS/HTTPS for external endpoints
-- Authentication/authorization for MCP gateway
-
-## Scalability
-
-- **KServe**: Horizontal scaling for inference workloads
-- **vLLM**: GPU resource pooling and efficient batching
-- **PostgreSQL**: Read replicas for observability queries
-- **MCP Servers**: Stateless, can scale horizontally
-- **Kagenti**: Distributed agent orchestration
-
-## Future Enhancements
-
-- Enhanced MLFlow visualization (Visual For MLFlow)
-- Additional MCP server integrations
-- Advanced scheduling strategies for llm-d
-- Multi-cluster federation for global deployment
-- Advanced security controls (mTLS, policy enforcement)
+| Owner | Components |
+|-------|-----------|
+| Infra team | OTel Collector, LLaMA Stack, Kagent, MLflow, GuideLLM, PostgreSQL |
+| Gerald | Tempo, Kiali, Istio injection, Grafana |
+| Sean | Qwen3-Embedding-8B deployment |
+| Sergey | KServe, vLLM (Qwen3-Next-80B) |
+| Eitan | Open WebUI |

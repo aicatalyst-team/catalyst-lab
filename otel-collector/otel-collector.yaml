@@ -45,6 +45,14 @@ data:
 
       transform:
         trace_statements:
+          # --- Fix vLLM unknown_service ---
+          # vLLM's llm_engine instrumentation does not set service.name in the
+          # OTel resource, causing it to appear as "unknown_service" in Jaeger,
+          # Tempo, and Grafana. Fix by setting it at the resource level.
+          - context: resource
+            statements:
+              - set(attributes["service.name"], "vllm") where attributes["service.name"] == "unknown_service"
+
           - context: span
             statements:
               # --- MLflow span type injection ---
@@ -53,6 +61,26 @@ data:
               # Map gen_ai.operation.name → mlflow.spanType so MLflow displays it.
               - set(attributes["mlflow.spanType"], "CHAT_MODEL") where attributes["gen_ai.operation.name"] == "chat"
               - set(attributes["mlflow.spanType"], "LLM") where attributes["gen_ai.operation.name"] == "text_completion"
+
+              # --- MLflow trace metadata ---
+              # MLflow populates trace columns from specific span attributes:
+              #   - request_preview: mlflow.spanInputs on ROOT span only
+              #   - response_preview: mlflow.spanOutputs on ROOT span only
+              #   - session: session.id on ANY span
+              #   - user: user.id on ANY span
+              #   - trace_name: root span's name (not an attribute)
+              #
+              # Root span request/response: OTTL cannot propagate attributes from
+              # child spans (openai.chat) to root spans (POST /). We set
+              # mlflow.spanInputs/spanOutputs on the openai.chat span so the data
+              # is visible when clicking into the trace detail, even though it won't
+              # populate the trace list preview columns.
+              - set(attributes["mlflow.spanInputs"], attributes["gen_ai.prompt.1.content"]) where attributes["gen_ai.prompt.1.content"] != nil
+              - set(attributes["mlflow.spanOutputs"], attributes["gen_ai.completion.0.content"]) where attributes["gen_ai.completion.0.content"] != nil
+              # Session: MLflow reads session.id from ANY span in the trace.
+              - set(attributes["session.id"], attributes["gen_ai.conversation.id"]) where attributes["gen_ai.conversation.id"] != nil
+              # User: MLflow reads user.id from ANY span. Map to agent name.
+              - set(attributes["user.id"], attributes["gen_ai.agent.name"]) where attributes["gen_ai.agent.name"] != nil
 
               # --- Jaeger/Tempo service dependency graph ---
               # LLaMA Stack → vLLM edges: the openai-v2 instrumentation on LLaMA Stack
