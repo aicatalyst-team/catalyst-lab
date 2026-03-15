@@ -1,0 +1,151 @@
+---
+# MCPMark Benchmark Job -- Filesystem Tasks
+#
+# Runs MCPMark filesystem benchmark tasks against the lab stack:
+#   - LLM calls via LLaMA Stack (OpenAI-compatible API)
+#   - MCP tool calls via ToolHive filesystem server
+#   - All calls traced via OTel -> MLflow + Jaeger
+#
+# Prerequisites:
+#   - LLaMA Stack running in catalystlab-shared
+#   - ToolHive filesystem-mcp and postgres-mcp servers running
+#   - mcpmark-api-key secret created:
+#     kubectl create secret generic mcpmark-api-key -n catalystlab-shared \
+#       --from-literal=OPENAI_API_KEY=<API_KEY>  # pragma: allowlist secret
+#
+# Usage:
+#   kubectl apply -f mcpmark/benchmark-job.yaml
+#   kubectl logs -n catalystlab-shared job/mcpmark-filesystem -f
+#
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mcpmark-filesystem
+  namespace: catalystlab-shared
+  labels:
+    app.kubernetes.io/name: mcpmark
+    app.kubernetes.io/component: benchmark
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcpmark
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mcpmark
+          image: docker.io/evalsysorg/mcpmark:latest
+          command:
+            - python3
+            - -m
+            - pipeline
+            - --mcp=filesystem
+            - --models=openai/vllm/RedHatAI/Qwen3-Next-80B-A3B-Instruct-FP8
+            - --tasks=file_property
+            - --exp-name=catalyst-lab-benchmark
+            - --k=1
+          env:
+            # LLaMA Stack as OpenAI-compatible backend
+            - name: OPENAI_API_BASE
+              value: http://llamastack.catalystlab-shared.svc.cluster.local:8321/v1
+            # LiteLLM requires an API key even if the backend doesn't
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcpmark-api-key
+                  key: OPENAI_API_KEY
+            # Filesystem test root (writable in container)
+            - name: FILESYSTEM_TEST_ROOT
+              value: /tmp/mcpmark-tests
+            - name: FILESYSTEM_CLEANUP
+              value: "true"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: results
+              mountPath: /app/results
+      volumes:
+        - name: results
+          emptyDir: {}
+---
+# MCPMark Benchmark Job -- PostgreSQL Tasks
+#
+# Runs MCPMark postgres benchmark tasks against the CNPG benchmark database.
+# Sample databases (chinook, dvdrental, employees, sports, lego) are pre-populated
+# in CNPG -- MCPMark's PostgresStateManager will detect them and skip downloads.
+#
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mcpmark-postgres
+  namespace: catalystlab-shared
+  labels:
+    app.kubernetes.io/name: mcpmark
+    app.kubernetes.io/component: benchmark
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcpmark
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mcpmark
+          image: docker.io/evalsysorg/mcpmark:latest
+          command:
+            - python3
+            - -m
+            - pipeline
+            - --mcp=postgres
+            - --models=openai/vllm/RedHatAI/Qwen3-Next-80B-A3B-Instruct-FP8
+            - --tasks=chinook
+            - --exp-name=catalyst-lab-benchmark
+            - --k=1
+          env:
+            # LLaMA Stack as OpenAI-compatible backend
+            - name: OPENAI_API_BASE
+              value: http://llamastack.catalystlab-shared.svc.cluster.local:8321/v1
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcpmark-api-key
+                  key: OPENAI_API_KEY
+            # PostgreSQL connection to CNPG benchmark database
+            - name: POSTGRES_HOST
+              value: pgvector-cluster-rw.catalystlab-shared.svc.cluster.local
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DATABASE
+              value: benchmark
+            - name: POSTGRES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-cluster-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-cluster-app
+                  key: password
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: results
+              mountPath: /app/results
+      volumes:
+        - name: results
+          emptyDir: {}

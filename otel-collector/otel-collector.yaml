@@ -1,17 +1,24 @@
 # OpenTelemetry Collector for catalystlab-shared namespace
 # Receives traces from LLaMA Stack and Kagent agents, processes them,
-# and exports to MLflow + Jaeger.
+# and exports to MLflow + Jaeger. Generates service graph and span
+# metrics locally via connectors (replaces Tempo metrics_generator).
 #
 # Sources:
 #   - LLaMA Stack (inference traces, gen_ai semantic conventions)
 #   - Kagent agents (agent runtime traces, tool calls, LLM interactions)
 #
-# Pipeline: Sources → OTLP (gRPC/HTTP) → [filter → transform → batch] → MLflow + Jaeger + Tempo
+# Pipelines:
+#   traces: OTLP → [filter → transform → batch] → MLflow + Jaeger + connectors
+#   metrics: [spanmetrics + servicegraph connectors] → Prometheus exporter (:8889)
 #
 # Key processors:
 #   - filter/drop-probes: Drops readiness/liveness probe spans (GET /v1/models)
 #   - transform: Injects mlflow.spanType from gen_ai semantic conventions,
 #     and sets peer.service for Jaeger dependency graph edges
+#
+# Connectors (replace Tempo metrics_generator, removed from cluster):
+#   - spanmetrics: Generates duration histograms and call counters per service/span
+#   - servicegraph: Generates service-to-service request rate/latency metrics
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -102,34 +109,62 @@ data:
 
       batch:
 
+    connectors:
+      # spanmetrics: generates per-service, per-span-name metrics from traces.
+      # Replaces Tempo metrics_generator span-metrics processor.
+      # Produces: traces_spanmetrics_duration_milliseconds_{bucket,sum,count}, traces_spanmetrics_calls_total
+      spanmetrics:
+        namespace: "traces_spanmetrics"
+        # service.name, span.name, span.kind, status.code are included by default.
+        # Only add extra span-level attributes needed as metric labels.
+        dimensions:
+          - name: peer.service
+        histogram:
+          explicit:
+            buckets: [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10]
+        metrics_flush_interval: 15s
+
+      # servicegraph: generates service-to-service edge metrics from traces.
+      # Replaces Tempo metrics_generator service-graphs processor.
+      # Uses peer.service attribute (set by transform processor) to determine edges.
+      # Produces: traces_service_graph_request_total, traces_service_graph_request_failed_total,
+      #           traces_service_graph_request_server_seconds_{bucket,sum,count}
+      servicegraph:
+        latency_histogram_buckets: [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10]
+        dimensions:
+          - service.name
+          - peer.service
+        store:
+          ttl: 10s
+          max_items: 1000
+
     exporters:
       # MLflow trace ingestion endpoint (experiment ID 1 = "llamastack-traces")
-      # Renamed from deprecated "otlphttp" to "otlp_http"
       otlp_http:
         endpoint: "http://mlflow.catalystlab-shared.svc.cluster.local:5000"
         headers:
           x-mlflow-experiment-id: "1"
 
       # Jaeger for distributed trace visualization and dependency graphs
-      # Renamed from deprecated "otlp/jaeger" to "otlp_grpc/jaeger"
       otlp_grpc/jaeger:
         endpoint: "http://jaeger-collector.catalystlab-shared.svc.cluster.local:4317"
         tls:
           insecure: true
 
-      # Tempo for Grafana-native tracing (service graphs, node graph, dashboards)
-      # Deployed by Gerald (2026-02-24). Grafana datasource already configured.
-      otlp_grpc/tempo:
-        endpoint: "http://tempo.catalystlab-shared.svc.cluster.local:4317"
-        tls:
-          insecure: true
+      # Prometheus exporter for spanmetrics and servicegraph metrics.
+      # Scraped by Prometheus via ServiceMonitor. Replaces Tempo remote-write.
+      prometheus:
+        endpoint: "0.0.0.0:8889"
 
     service:
       pipelines:
         traces:
           receivers: [otlp]
           processors: [filter/drop-probes, transform, batch]
-          exporters: [otlp_http, otlp_grpc/jaeger, otlp_grpc/tempo]
+          exporters: [otlp_http, otlp_grpc/jaeger, spanmetrics, servicegraph]
+        metrics:
+          receivers: [spanmetrics, servicegraph]
+          exporters: [prometheus]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -160,6 +195,9 @@ spec:
             - containerPort: 4318
               name: http
               protocol: TCP
+            - containerPort: 8889
+              name: metrics
+              protocol: TCP
           resources:
             requests:
               cpu: 200m
@@ -180,6 +218,8 @@ kind: Service
 metadata:
   name: otel-collector
   namespace: catalystlab-shared
+  labels:
+    app: otel-collector
 spec:
   selector:
     app: otel-collector
@@ -192,4 +232,27 @@ spec:
       port: 4318
       targetPort: 4318
       protocol: TCP
+    - name: metrics
+      port: 8889
+      targetPort: 8889
+      protocol: TCP
   type: ClusterIP
+---
+# ServiceMonitor for Prometheus to scrape spanmetrics + servicegraph metrics
+# from the OTel collector's Prometheus exporter endpoint.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector
+  namespace: catalystlab-shared
+  labels:
+    app: otel-collector
+    release: prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: otel-collector
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics

@@ -4,6 +4,13 @@ guidellm/results/
 CLUSTER.md
 PLAN.md
 journal/
+WORKPLAN.md
+
+# Internal team artifacts (moved to .claude/)
+.claude/WORKPLAN.md
+.claude/workspace/
+.claude/upstream-issues/
+.claude/scripts/
 
 # Pre-commit secrets baseline
 .secrets.baseline

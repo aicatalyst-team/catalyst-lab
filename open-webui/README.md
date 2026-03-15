@@ -1,6 +1,6 @@
 # Open WebUI
 
-Chat interface deployed by Eitan for team use. Provides a browser-based UI for interacting with LLM endpoints.
+Chat interface for the team. Provides a browser-based UI for interacting with LLM endpoints.
 
 ## Live State (discovered 2026-02-23)
 
@@ -11,7 +11,7 @@ Chat interface deployed by Eitan for team use. Provides a browser-based UI for i
 | Helm chart | `open-webui-10.2.1` |
 | External URL | `https://open-webui.<INGRESS_IP>.nip.io` (TLS) |
 | Deployed | 2026-01-15 (Helm), ingress added 2026-01-16 |
-| Owner | Eitan |
+| Owner | Team-managed |
 
 ## Architecture
 
@@ -75,4 +75,4 @@ helm get values open-webui -n open-webui
 - Model endpoint configuration is stored in the SQLite PVC, not in the Helm values or K8s manifests — changes survive pod restarts but are not version-controlled
 - The `OPENAI_API_KEY` env var in the deployment is a dummy placeholder (`0p3n-w3bu!`) — Open WebUI accepts any non-empty string for OpenAI-compatible endpoints that don't enforce authentication
 - WebSocket timeout is extended to 3600s on the nginx ingress to support long-running chat sessions
-- No manifests are committed here — Open WebUI is managed solely via Helm; consult Eitan for configuration changes
+- No manifests are committed here — Open WebUI is managed solely via Helm

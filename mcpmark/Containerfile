@@ -1,0 +1,23 @@
+# MCPMark benchmark image for AI Catalyst Lab
+#
+# Based on the upstream eval-sys/mcpmark Dockerfile.
+# Runs filesystem and postgres benchmark tasks against
+# LLaMA Stack and ToolHive MCP servers on the cluster.
+#
+# Build:
+#   podman build --platform linux/amd64 -t quay.io/aicatalyst/mcpmark:latest -f mcpmark/Containerfile .
+#
+# The upstream image is already published on Docker Hub:
+#   docker.io/evalsysorg/mcpmark:latest
+#
+# We use the upstream image directly and configure via environment variables.
+# No code changes needed -- MCPMark's LiteLLM backend supports OpenAI-compatible APIs.
+#
+FROM docker.io/evalsysorg/mcpmark:latest
+
+# Set default environment for lab usage
+ENV PYTHONPATH="/app"
+ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+
+# Default command shows help
+CMD ["python3", "-m", "pipeline", "--help"]

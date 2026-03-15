@@ -2,14 +2,13 @@
 
 Deploy PostgreSQL 17 with the [pgvector](https://github.com/pgvector/pgvector) extension on Kubernetes using the [CloudNativePG](https://cloudnative-pg.io/) operator.
 
-**Target node:** `worker-gpu2`
 **Namespace:** `catalystlab-shared`
 
 ## Prerequisites
 
 - `kubectl` configured with cluster access
 - `helm` v3+ installed
-- Access to the `worker-gpu2` node
+- A node with sufficient resources for PostgreSQL
 
 ## Installation
 
@@ -66,12 +65,6 @@ Expected output shows `Cluster in healthy state`:
 ```
 NAME               AGE   INSTANCES   READY   STATUS                     PRIMARY
 pgvector-cluster   ..s   1           1       Cluster in healthy state   pgvector-cluster-1
-```
-
-Check the pod is running on `worker-gpu2`:
-
-```bash
-kubectl get pods -n catalystlab-shared -o wide
 ```
 
 Verify pgvector extension is loaded:
@@ -161,6 +154,51 @@ LIMIT 5;
 CREATE INDEX ON items USING hnsw (embedding vector_l2_ops);
 ```
 
+## ANN Index Dimension Limit
+
+pgvector 0.8.1 enforces maximum dimension limits on ANN indexes (HNSW and IVFFlat):
+
+| Vector Type | Max Index Dims | Storage per Dim |
+|-------------|:--------------:|:---------------:|
+| `vector` (float32) | 2,000 | 4 bytes |
+| `halfvec` (float16) | 4,000 | 2 bytes |
+| `bit` (binary) | 64,000 | 1/8 byte |
+
+### Current State
+
+The lab uses **Qwen3-Embedding-8B** which outputs **4096-dimension** embeddings as `vector(4096)`. Since 4096 exceeds the 2,000-dimension ANN index limit for the `vector` type, similarity searches use **sequential scan** (no ANN index). With demo-scale data (1 row, 152 KB), this has no measurable performance impact.
+
+### Workaround Options
+
+Listed in order of practicality for this lab:
+
+1. **Accept sequential scan (current)** -- For demo-scale data (<10K vectors), sequential scan performs comparably to indexed search. No changes needed.
+
+2. **Matryoshka dimension reduction** -- Qwen3-Embedding-8B supports [MRL (Matryoshka Representation Learning)](https://github.com/QwenLM/Qwen3-Embedding). It can output truncated embeddings (e.g., 512, 1024, 2048 dims) with graceful quality degradation. However, vLLM currently rejects the `dimensions` parameter for this model, treating it as non-matryoshka. The LLaMA Stack Containerfile patches around this by removing `dimensions` entirely. Fixing this upstream (in vLLM or LLaMA Stack) would allow requesting ≤2000-dim embeddings and creating HNSW indexes.
+
+3. **halfvec with truncation** -- The `halfvec` type supports up to 4,000 dimensions. Truncating from 4096 to 4000 dims (dropping 96 trailing dimensions) loses minimal information. This requires: changing the column type to `halfvec(4000)`, truncating vectors on insert, and creating an HNSW index with `halfvec_l2_ops`. Example:
+   ```sql
+   ALTER TABLE vectors ALTER COLUMN embedding TYPE halfvec(4000)
+     USING embedding::vector(4000)::halfvec(4000);
+   CREATE INDEX ON vectors USING hnsw (embedding halfvec_l2_ops);
+   ```
+
+4. **Switch embedding model** -- Use a model with ≤2000 native dimensions (e.g., many models output 768 or 1536 dims). Requires re-embedding all existing vectors.
+
+### Decision
+
+Sequential scan is acceptable for the lab's demo-scale data. For production workloads (>10K vectors), the recommended path is Matryoshka dimension reduction to ≤2000 dims once the vLLM `dimensions` parameter is supported for this model.
+
+### HNSW Tuning Reference
+
+If an HNSW index is created in the future, these parameters control the quality/performance tradeoff:
+
+| Parameter | Default | Range | Effect |
+|-----------|:-------:|:-----:|--------|
+| `m` | 16 | 2-100 | Connections per layer. Higher = better recall, larger index. |
+| `ef_construction` | 64 | 4-1000 | Build-time candidate list. Higher = better index quality, slower build. Must be ≥ 2*m. |
+| `ef_search` | 40 | 1-1000 | Query-time candidate list. Higher = better recall, slower search. Set per-query via `SET LOCAL hnsw.ef_search = N`. |
+
 ## Configuration
 
 The cluster is configured in `cluster.yaml` with the following settings:
@@ -174,7 +212,7 @@ The cluster is configured in `cluster.yaml` with the following settings:
 | Memory requests/limits | 2Gi / 4Gi | Memory allocation |
 | shared_buffers | 512MB | PostgreSQL shared memory |
 | max_connections | 200 | Maximum concurrent connections |
-| Node | worker-gpu2 | Pinned via nodeSelector |
+| Node | (set via nodeSelector) | Pinned to target node |
 
 ## Uninstall
 

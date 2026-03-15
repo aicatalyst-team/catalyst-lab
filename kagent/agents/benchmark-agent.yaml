@@ -1,0 +1,126 @@
+---
+# Benchmark Agent
+#
+# Agent with access to MCP gateway tools (filesystem + postgres)
+# alongside standard kubectl read-only tools.
+# Used for testing MCP tool tracing through the Envoy AI Gateway.
+#
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: benchmark-agent
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: benchmark-agent
+    app.kubernetes.io/part-of: kagent
+    app.kubernetes.io/component: agent
+spec:
+  type: Declarative
+  description: >-
+    Benchmark agent with filesystem and database tools via the MCP gateway.
+    Used for testing MCP tool calling and tracing through the full stack.
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      # Benchmark Agent
+
+      You are a benchmark agent with access to filesystem and database tools
+      via the MCP gateway, plus Kubernetes read-only tools.
+
+      ## Available Tool Categories
+
+      ### Filesystem Tools (via MCP gateway)
+      - read_file, write_file, edit_file, create_directory
+      - list_directory, directory_tree, search_files
+      - get_file_info, move_file
+
+      ### Database Tools (via MCP gateway)
+      - list_schemas, list_objects, get_object_details
+      - execute_sql, explain_query
+      - get_top_queries, analyze_workload_indexes
+      - analyze_query_indexes, analyze_db_health
+
+      ### Kubernetes Tools
+      - k8s_get_resources, k8s_get_pod_logs
+      - k8s_describe_resource, k8s_get_resource_yaml
+
+      ## Guidelines
+      - Use filesystem tools for file operations in /tmp
+      - Use database tools for PostgreSQL operations on the benchmark database
+      - Use kubectl tools for cluster inspection
+      - Always report tool outputs clearly
+
+    a2aConfig:
+      skills:
+        - id: filesystem-operations
+          name: Filesystem Operations
+          description: Read, write, and manage files using the MCP filesystem server
+          examples:
+            - "List the files in /tmp"
+            - "Create a file called test.txt with some content"
+            - "Search for all .yaml files"
+          tags: [filesystem, files, mcp]
+        - id: database-operations
+          name: Database Operations
+          description: Query and analyze the PostgreSQL benchmark database
+          examples:
+            - "List all schemas in the database"
+            - "Create a test table and insert some data"
+            - "Analyze database health"
+          tags: [database, postgres, sql, mcp]
+        - id: cluster-inspection
+          name: Cluster Inspection
+          description: Read-only inspection of Kubernetes cluster resources
+          examples:
+            - "List pods in catalystlab-shared"
+            - "Show me the OTel collector logs"
+          tags: [kubernetes, cluster]
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: mcp-gateway
+          toolNames:
+            # Filesystem tools
+            - mcp-filesystem-mcp-proxy__read_file
+            - mcp-filesystem-mcp-proxy__read_text_file
+            - mcp-filesystem-mcp-proxy__read_multiple_files
+            - mcp-filesystem-mcp-proxy__write_file
+            - mcp-filesystem-mcp-proxy__edit_file
+            - mcp-filesystem-mcp-proxy__create_directory
+            - mcp-filesystem-mcp-proxy__list_directory
+            - mcp-filesystem-mcp-proxy__list_directory_with_sizes
+            - mcp-filesystem-mcp-proxy__directory_tree
+            - mcp-filesystem-mcp-proxy__move_file
+            - mcp-filesystem-mcp-proxy__search_files
+            - mcp-filesystem-mcp-proxy__get_file_info
+            - mcp-filesystem-mcp-proxy__list_allowed_directories
+            # Postgres tools
+            - mcp-postgres-mcp-proxy__list_schemas
+            - mcp-postgres-mcp-proxy__list_objects
+            - mcp-postgres-mcp-proxy__get_object_details
+            - mcp-postgres-mcp-proxy__execute_sql
+            - mcp-postgres-mcp-proxy__explain_query
+            - mcp-postgres-mcp-proxy__get_top_queries
+            - mcp-postgres-mcp-proxy__analyze_workload_indexes
+            - mcp-postgres-mcp-proxy__analyze_query_indexes
+            - mcp-postgres-mcp-proxy__analyze_db_health
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: kagent-tool-server
+          toolNames:
+            - k8s_get_resources
+            - k8s_get_pod_logs
+            - k8s_describe_resource
+            - k8s_get_resource_yaml
+    deployment:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi

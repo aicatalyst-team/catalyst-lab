@@ -1,0 +1,65 @@
+---
+# EnvoyProxy config with OTel tracing for the MCP gateway.
+# Sends trace spans to the OTel collector in catalystlab-shared.
+#
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: mcp-gateway-proxy
+  namespace: catalystlab-shared
+spec:
+  telemetry:
+    tracing:
+      samplingRate: 100
+      provider:
+        type: OpenTelemetry
+        serviceName: mcp-gateway
+        backendRefs:
+          - name: otel-collector
+            namespace: catalystlab-shared
+            port: 4317
+---
+# Gateway for MCP traffic in catalystlab-shared.
+# Separate from the kserve-lab AI Gateway to avoid cross-namespace routing issues.
+# References EnvoyProxy config for OTel tracing.
+#
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-gateway
+  namespace: catalystlab-shared
+spec:
+  gatewayClassName: envoy
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: mcp-gateway-proxy
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+# MCPRoute: aggregates filesystem and postgres MCP servers
+# behind a single /mcp endpoint on the gateway.
+#
+# Tool calls are automatically prefixed by backend name:
+#   filesystem_mcp__read_file, postgres_mcp__execute_sql, etc.
+#
+apiVersion: aigateway.envoyproxy.io/v1alpha1
+kind: MCPRoute
+metadata:
+  name: mcp-benchmark
+  namespace: catalystlab-shared
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: mcp-gateway
+      namespace: catalystlab-shared
+  path: /mcp
+  backendRefs:
+    - name: mcp-filesystem-mcp-proxy
+      port: 8080
+    - name: mcp-postgres-mcp-proxy
+      port: 8080

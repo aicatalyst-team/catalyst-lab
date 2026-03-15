@@ -181,12 +181,11 @@ The observability stack provides four complementary views of the same trace data
 
 ### Multi-Tenancy
 
-This is a shared cluster. Component ownership:
+This is a shared cluster. Component ownership is distributed across the team:
 
-| Owner | Components |
-|-------|-----------|
-| Infra team | OTel Collector, LLaMA Stack, Kagent, MLflow, GuideLLM, PostgreSQL |
-| Gerald | Tempo, Kiali, Istio injection, Grafana |
-| Sean | Qwen3-Embedding-8B deployment |
-| Sergey | KServe, vLLM (Qwen3-Next-80B) |
-| Eitan | Open WebUI |
+| Area | Components |
+|------|-----------|
+| Infra / Platform | OTel Collector, LLaMA Stack, Kagent, MLflow, GuideLLM, PostgreSQL |
+| Observability | Tempo, Kiali, Istio injection, Grafana |
+| Model Serving | KServe, vLLM (Qwen3-Next-80B, Qwen3-Embedding-8B) |
+| User Interface | Open WebUI |

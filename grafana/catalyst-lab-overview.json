@@ -19,8 +19,20 @@
     "panels": [
       {
         "datasource": {
-          "type": "tempo",
-          "uid": "tempo"
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 10 },
+                { "color": "red", "value": 50 }
+              ]
+            }
+          }
         },
         "gridPos": {
           "h": 10,
@@ -30,35 +42,26 @@
         },
         "id": 1,
         "options": {
-          "edges": {
-            "mainStatUnit": "r/sec"
+          "displayMode": "gradient",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "calcs": ["lastNotNull"]
           },
-          "nodes": {
-            "arcs": [
-              {
-                "color": "red",
-                "field": "arc__failed"
-              },
-              {
-                "color": "green",
-                "field": "arc__passed"
-              }
-            ],
-            "mainStatUnit": "ms"
-          }
+          "showUnfilled": true
         },
         "targets": [
           {
             "datasource": {
-              "type": "tempo",
-              "uid": "tempo"
+              "type": "prometheus",
+              "uid": "prometheus"
             },
-            "queryType": "serviceMap",
-            "serviceMapQuery": "{}"
+            "expr": "sum(increase(traces_service_graph_request_total[1h])) by (client, server)",
+            "legendFormat": "{{client}} -> {{server}}"
           }
         ],
-        "title": "Service Graph",
-        "type": "nodeGraph"
+        "title": "Service-to-Service Request Flow (1h)",
+        "description": "Shows request counts between services over the last hour. Derived from OTel servicegraph connector (replaces Tempo service graph).",
+        "type": "bargauge"
       },
       {
         "datasource": {
@@ -136,7 +139,7 @@
               "type": "prometheus",
               "uid": "prometheus"
             },
-            "expr": "histogram_quantile(0.50, sum(rate(traces_spanmetrics_latency_bucket{service=\"llamastack\", span_name=~\"chat.*\"}[5m])) by (le))",
+            "expr": "histogram_quantile(0.50, sum(rate(traces_spanmetrics_duration_milliseconds_bucket{service_name=\"llamastack\", span_name=~\"chat.*\"}[5m])) by (le)) / 1000",
             "legendFormat": "P50"
           },
           {
@@ -144,7 +147,7 @@
               "type": "prometheus",
               "uid": "prometheus"
             },
-            "expr": "histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{service=\"llamastack\", span_name=~\"chat.*\"}[5m])) by (le))",
+            "expr": "histogram_quantile(0.95, sum(rate(traces_spanmetrics_duration_milliseconds_bucket{service_name=\"llamastack\", span_name=~\"chat.*\"}[5m])) by (le)) / 1000",
             "legendFormat": "P95"
           },
           {
@@ -152,7 +155,7 @@
               "type": "prometheus",
               "uid": "prometheus"
             },
-            "expr": "histogram_quantile(0.99, sum(rate(traces_spanmetrics_latency_bucket{service=\"llamastack\", span_name=~\"chat.*\"}[5m])) by (le))",
+            "expr": "histogram_quantile(0.99, sum(rate(traces_spanmetrics_duration_milliseconds_bucket{service_name=\"llamastack\", span_name=~\"chat.*\"}[5m])) by (le)) / 1000",
             "legendFormat": "P99"
           }
         ],
@@ -257,7 +260,7 @@
               "type": "prometheus",
               "uid": "prometheus"
             },
-            "expr": "count(count(traces_spanmetrics_calls_total) by (service))"
+            "expr": "count(count(traces_spanmetrics_calls_total) by (service_name))"
           }
         ],
         "title": "Active Agent Services",
@@ -297,7 +300,7 @@
               "type": "prometheus",
               "uid": "prometheus"
             },
-            "expr": "sum(increase(traces_spanmetrics_calls_total{service=\"llamastack\", span_name=~\"chat.*\"}[1h]))"
+            "expr": "sum(increase(traces_spanmetrics_calls_total{service_name=\"llamastack\", span_name=~\"chat.*\"}[1h]))"
           }
         ],
         "title": "Total LLM Calls (1h)",
@@ -447,8 +450,8 @@
               "type": "prometheus",
               "uid": "prometheus"
             },
-            "expr": "sum(rate(traces_spanmetrics_calls_total{span_name=~\"invoke_agent.*|execute_tool.*|call_llm.*|generate_content.*\"}[5m])) by (service, span_name)",
-            "legendFormat": "{{service}} / {{span_name}}"
+            "expr": "sum(rate(traces_spanmetrics_calls_total{span_name=~\"invoke_agent.*|execute_tool.*|call_llm.*|generate_content.*\"}[5m])) by (service_name, span_name)",
+            "legendFormat": "{{service_name}} / {{span_name}}"
           }
         ],
         "title": "Agent Span Counts by Operation",
@@ -456,8 +459,8 @@
       },
       {
         "datasource": {
-          "type": "tempo",
-          "uid": "tempo"
+          "type": "jaeger",
+          "uid": "jaeger"
         },
         "gridPos": {
           "h": 8,
@@ -469,15 +472,16 @@
         "targets": [
           {
             "datasource": {
-              "type": "tempo",
-              "uid": "tempo"
+              "type": "jaeger",
+              "uid": "jaeger"
             },
-            "limit": 20,
-            "query": "{} | select(resource.service.name, name, duration, status)",
-            "queryType": "traceqlSearch"
+            "queryType": "search",
+            "service": "",
+            "limit": 20
           }
         ],
-        "title": "Recent Traces",
+        "title": "Recent Traces (Jaeger)",
+        "description": "Trace search via Jaeger (replaces Tempo TraceQL search).",
         "type": "table"
       }
     ],

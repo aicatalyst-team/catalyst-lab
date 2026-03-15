@@ -1,0 +1,24 @@
+---
+# RemoteMCPServer: Envoy AI Gateway MCPRoute
+#
+# Points Kagent agents at the Envoy AI Gateway MCPRoute endpoint
+# which aggregates filesystem and postgres MCP servers.
+# Tool names are prefixed by backend: mcp-filesystem-mcp-proxy__*, mcp-postgres-mcp-proxy__*
+#
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: mcp-gateway
+  namespace: kagent
+spec:
+  description: >-
+    Envoy AI Gateway MCP endpoint aggregating filesystem and postgres tools
+    via ToolHive-managed MCP servers with OpenTelemetry tracing.
+  protocol: STREAMABLE_HTTP
+  # The Envoy Gateway service name is auto-generated from the Gateway resource.
+  # Replace <ENVOY_GATEWAY_SVC> with the actual service name from:
+  #   kubectl get svc -n envoy-gateway-system
+  url: http://<ENVOY_GATEWAY_SVC>.envoy-gateway-system:80/mcp
+  timeout: 60s
+  sseReadTimeout: 5m0s
+  terminateOnClose: true

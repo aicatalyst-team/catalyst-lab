@@ -1,0 +1,50 @@
+---
+# ToolHive MCPServer: PostgreSQL Pro
+#
+# Deploys the CrystalDBA postgres-mcp server via ToolHive.
+# Connected to the CNPG 'benchmark' database (isolated from production dbs).
+# Provides SQL execution, schema exploration, and performance analysis tools.
+#
+# The DATABASE_URI secret must be created before applying:
+#   kubectl create secret generic postgres-mcp-credentials \
+#     -n catalystlab-shared \
+#     --from-literal=DATABASE_URI='postgresql://app:<PASSWORD>@pgvector-cluster-rw:5432/benchmark'
+#
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: postgres-mcp
+  namespace: catalystlab-shared
+spec:
+  image: crystaldba/postgres-mcp:0.3.0
+  transport: sse
+  proxyMode: streamable-http
+  port: 8080
+  # The container listens on SSE port 8000 by default
+  targetPort: 8000
+  args:
+    - --transport=sse
+    - --sse-host=0.0.0.0
+    - --sse-port=8000
+  secrets:
+    - name: postgres-mcp-credentials
+      key: DATABASE_URI
+      targetEnvName: DATABASE_URI
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+  telemetry:
+    openTelemetry:
+      enabled: true
+      endpoint: otel-collector.catalystlab-shared.svc.cluster.local:4318
+      serviceName: postgres-mcp
+      insecure: true
+      tracing:
+        enabled: true
+        samplingRate: "1.0"
+      metrics:
+        enabled: true

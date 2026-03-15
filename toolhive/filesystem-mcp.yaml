@@ -1,0 +1,53 @@
+---
+# ToolHive MCPServer: Filesystem
+#
+# Deploys the official MCP filesystem server via ToolHive.
+# Provides file read/write/search tools to AI agents and benchmarks.
+# Uses /tmp as the sandbox directory, backed by an emptyDir volume so writes
+# succeed despite the readOnlyRootFilesystem security context.
+#
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: filesystem-mcp
+  namespace: catalystlab-shared
+spec:
+  image: docker.io/mcp/filesystem:1.0.2
+  transport: stdio
+  # ToolHive proxy exposes the stdio server as streamable-http
+  proxyMode: streamable-http
+  port: 8080
+  args:
+    - /tmp
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+  # podTemplateSpec adds an emptyDir volume at /tmp so the MCP server can write
+  # files. ToolHive sets readOnlyRootFilesystem: true on the StatefulSet, making
+  # the default /tmp read-only. The "mcp" container name targets the server container.
+  podTemplateSpec:
+    spec:
+      containers:
+        - name: mcp
+          volumeMounts:
+            - name: tmp-workspace
+              mountPath: /tmp
+      volumes:
+        - name: tmp-workspace
+          emptyDir:
+            sizeLimit: 256Mi
+  telemetry:
+    openTelemetry:
+      enabled: true
+      endpoint: otel-collector.catalystlab-shared.svc.cluster.local:4318
+      serviceName: filesystem-mcp
+      insecure: true
+      tracing:
+        enabled: true
+        samplingRate: "1.0"
+      metrics:
+        enabled: true

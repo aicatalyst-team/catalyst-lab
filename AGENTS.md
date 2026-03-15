@@ -14,8 +14,8 @@ Kubernetes manifests and documentation for the AI Catalyst Lab shared stack. Thi
 | LLaMA Stack | `catalystlab-shared` | Port 8321, PostgreSQL-backed state |
 | MLflow | `catalystlab-shared` | Port 5000, PVC artifact store |
 | OTel Collector | `catalystlab-shared` | gRPC 4317 / HTTP 4318 |
-| Open WebUI | `open-webui` | Eitan's deployment, Helm-managed |
-| KServe / vLLM | `kserve-lab` | Sean's deployment — **do not modify** |
+| Open WebUI | `open-webui` | Helm-managed |
+| KServe / vLLM | `kserve-lab` | Shared deployment — coordinate before modifying |
 | GuideLLM | `guide-llm` | Benchmark jobs — namespace owned by team |
 
 ## Security Rules

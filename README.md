@@ -53,8 +53,9 @@ graph LR
 ```
 catalyst-lab/
 ├── kagent/                 # Agent orchestration (Kagent v0.7.18)
-│   ├── agents/             # Agent CRD definitions (labdemo-agent)
+│   ├── agents/             # Agent CRD definitions (labdemo-agent, benchmark-agent)
 │   ├── rbac-scoped.yaml    # Scoped RBAC (read cluster, write catalystlab-shared)
+│   ├── mcp-gateway-remote.yaml  # RemoteMCPServer for Envoy AI Gateway
 │   ├── values.yaml         # Helm values
 │   └── README.md
 ├── llamastack/             # LLaMA Stack inference gateway
@@ -64,6 +65,16 @@ catalyst-lab/
 ├── otel-collector/         # OpenTelemetry Collector
 │   ├── otel-collector.yaml # ConfigMap + Deployment + Service
 │   └── README.md           # Pipeline documentation
+├── envoy-ai-gateway/       # Envoy AI Gateway MCP aggregation
+│   └── mcp-gateway.yaml    # EnvoyProxy + Gateway + MCPRoute
+├── toolhive/               # ToolHive MCP server CRDs
+│   ├── filesystem-mcp.yaml # Filesystem MCP server
+│   ├── postgres-mcp.yaml   # PostgreSQL MCP server
+│   └── README.md
+├── mcpmark/                # MCP benchmark tool
+│   ├── benchmark-job.yaml  # Kubernetes Job manifest
+│   ├── Containerfile       # Custom image with dependencies
+│   └── README.md
 ├── guidellm/               # LLM benchmarking
 │   ├── benchmark-job.yaml  # Kubernetes Job manifest
 │   └── README.md
@@ -75,6 +86,9 @@ catalyst-lab/
 ├── jaeger/                 # Distributed tracing
 │   ├── deployment.yaml     # Jaeger all-in-one
 │   └── README.md
+├── grafana/                # Grafana dashboards
+│   ├── catalyst-lab-overview.json  # Dashboard export
+│   └── README.md
 ├── istio/                  # Service mesh configuration
 │   ├── istio-values.yaml   # Istio Helm values
 │   └── README.md
@@ -82,12 +96,15 @@ catalyst-lab/
 │   ├── kiali-values.yaml   # Kiali Helm values
 │   └── README.md
 ├── kagenti/                # Istio AuthZ policies for agent namespaces
-├── kserve/                 # KServe model serving (Sean's deployment)
+├── kserve/                 # KServe model serving
 │   └── README.md
-├── open-webui/             # Chat interface (Eitan's deployment)
+├── open-webui/             # Chat interface
 │   └── README.md
 ├── scripts/                # Operational scripts
 │   ├── guidellm_to_mlflow.py   # Upload benchmark results to MLflow
+│   ├── demo-scenario.sh        # Generate demo traffic
+│   ├── run-benchmark-sweep.sh  # Concurrency sweep benchmarks
+│   ├── export-grafana-dashboard.sh  # Export dashboard JSON
 │   ├── check-sensitive-data.py # Pre-commit sensitive data scanner
 │   └── README.md
 ├── diagrams/               # Architecture diagrams (Mermaid)
