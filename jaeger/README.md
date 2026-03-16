@@ -1,4 +1,17 @@
-# Jaeger Deployment on Kubernetes (Optional)
+# Jaeger Deployment on Kubernetes (DEPRECATED)
+
+> 🚫 **DEPRECATED**: Jaeger was **removed from catalyst-lab on March 12, 2026** and replaced by **Tempo**. This README is preserved for historical reference only.
+>
+> **Migration path**: Use [Tempo](../tempo/README.md) for distributed tracing. Tempo provides:
+> - Better scalability (object storage backend)
+> - Native Grafana integration
+> - Lower operational cost
+> - TraceQL query language
+> - Kiali integration (service mesh visualization)
+>
+> **See**: [tempo/README.md](../tempo/README.md) for current deployment instructions.
+
+---
 
 > 📝 **CONFIGURATION NOTE**: This README uses placeholders for environment-specific values. Before deployment, update `ingress.yaml` with your cluster's external IP. Replace `<CLUSTER_IP>` in examples with your nginx ingress external IP.
 

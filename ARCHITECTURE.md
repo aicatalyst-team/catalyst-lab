@@ -33,8 +33,8 @@ graph LR
     3 databases"]
 
     Observability["Observability
-    OTel Collector (3-way fan-out)
-    MLflow + Jaeger + Tempo
+    OTel Collector (fan-out)
+    MLflow + Tempo
     Grafana, Kiali, Prometheus"]
 
     Clients --> Agents
@@ -95,16 +95,15 @@ The observability stack provides four complementary views of the same trace data
 
 **OTel Collector** (namespace: `catalystlab-shared`) receives OTLP from all instrumented services and performs:
 1. **Filtering** -- drops readiness/liveness probe spans and A2A health check spans (eliminates 108+ noise spans/min)
-2. **Transform** -- injects `mlflow.spanType` from `gen_ai.operation.name`, sets `peer.service` for dependency graph edges
-3. **3-way fan-out** -- exports to MLflow, Jaeger, and Tempo simultaneously
+2. **Transform** -- injects `mlflow.spanType` from `gen_ai.operation.name`, sets `peer.service` for dependency graph edges, fixes vLLM `unknown_service` naming
+3. **Fan-out** -- exports to MLflow and Tempo simultaneously
 
 | Tool | Namespace | Purpose | Strength |
 |------|-----------|---------|----------|
-| **MLflow** | catalystlab-shared | Experiment tracking, trace storage | Span type analysis, experiment comparison |
-| **Jaeger** | catalystlab-shared | Trace tree visualization | Deep trace inspection, 12-service dependency graph |
-| **Tempo** | catalystlab-shared | Grafana-native tracing | Service graph via metrics generator, node graph panel |
-| **Grafana** | monitoring | Dashboards | 10-panel "AI Catalyst Lab Overview" dashboard |
-| **Kiali** | kiali | Istio mesh topology | Animated service graph, traffic flow visualization |
+| **MLflow** | catalystlab-shared | Experiment tracking, trace storage | Span type analysis, experiment comparison, custom metadata (user/session) |
+| **Tempo** | catalystlab-shared | Distributed tracing backend | Scalable storage, Grafana integration, TraceQL queries |
+| **Grafana** | monitoring | Dashboards | 10-panel "AI Catalyst Lab Overview" dashboard, Tempo datasource |
+| **Kiali** | kiali | Istio mesh topology | Animated service graph, traffic flow visualization, Tempo integration |
 | **Prometheus** | monitoring | Metrics | Tempo service graph metrics via remote write |
 
 ### Data Layer (namespace: `catalystlab-shared`)
@@ -148,17 +147,16 @@ The observability stack provides four complementary views of the same trace data
 
 1. **LLaMA Stack** and **Kagent agents** emit OTLP traces to OTel Collector (`:4317`)
 2. OTel Collector filters probe noise, transforms span attributes, batches
-3. Fan-out to **MLflow** (OTLP/HTTP), **Jaeger** (OTLP/gRPC), **Tempo** (OTLP/gRPC)
+3. Fan-out to **MLflow** (OTLP/HTTP) and **Tempo** (OTLP/gRPC)
 4. **Tempo** pushes service graph metrics to **Prometheus** via remote write
 5. **Grafana** queries Prometheus + Tempo for dashboard panels
-6. **Kiali** reads Istio mesh topology independently
+6. **Kiali** queries **Tempo** for trace correlation with service mesh topology
 
 ## Known Limitations
 
 | Limitation | Impact | Status |
 |------------|--------|--------|
-| MLflow request/response preview empty | Cannot inspect prompt/completion in MLflow UI | Blocked on upstream openai-v2 `SPAN_AND_EVENT` mode |
-| Jaeger content inspection not working | Cannot view span content in Jaeger | Needs LoggerProvider + logs pipeline |
+| MLflow request/response preview from OTel | Cannot inspect prompt/completion from auto-instrumentation in MLflow UI | **RESOLVED** via custom middleware (writes directly to PostgreSQL) |
 | pgvector 2000-dim ANN index limit | 4096-dim embeddings use sequential scan | Acceptable for demo; consider lower-dim model for production |
 | llm-d advanced features not configured | Basic routing only | P/D disaggregation, KV offload deferred |
 
