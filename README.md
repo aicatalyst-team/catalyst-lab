@@ -12,14 +12,14 @@ A multi-tenant GPU cluster running 15+ components across 6 namespaces:
 | **Inference Gateway** | LLaMA Stack 0.5.1 -- OpenAI-compatible API, tool calling, RAG | `catalystlab-shared` |
 | **Model Serving** | KServe + llm-d + vLLM -- Qwen3-Next-80B (FP8, TP=2) + Qwen3-Embedding-8B | `kserve-lab` |
 | **Data** | PostgreSQL 17 (CNPG) + pgvector -- 3 databases (vectordb, llamastack, mlflow) | `catalystlab-shared` |
-| **Observability** | OTel Collector (3-way fan-out), MLflow, Jaeger, Tempo, Grafana, Kiali, Prometheus | `catalystlab-shared`, `monitoring`, `kiali` |
+| **Observability** | OTel Collector (fan-out), MLflow, Tempo, Grafana, Kiali, Prometheus | `catalystlab-shared`, `monitoring`, `istio-system` |
 | **Benchmarking** | GuideLLM -- inference benchmarks as K8s Jobs, results uploaded to MLflow | `guide-llm` |
 
 ## Key Results
 
 - **Agent deployment**: 11/11 agents Ready from CRD manifests, zero custom code
 - **Observability noise**: 108+ OTel spans/min from probe traffic filtered at the collector before any inference runs
-- **Trace fan-out**: Single OTel pipeline writes to MLflow (experiment tracking) + Jaeger (trace trees) + Tempo (Grafana dashboards) simultaneously
+- **Trace fan-out**: Single OTel pipeline writes to MLflow (experiment tracking + custom metadata) + Tempo (distributed storage + Grafana dashboards) simultaneously
 - **RAG pipeline**: End-to-end verified -- document upload, chunking, embedding (Qwen3-Embedding-8B), pgvector storage, semantic search
 - **Custom image**: Upstream regressions fixed in `quay.io/aicatalyst/llamastack-starter:0.5.1-patched` (OTel instrumentation, Agents API crash, vLLM dimensions compatibility)
 
@@ -44,8 +44,8 @@ graph LR
     Gateway -.->|"OTLP"| OTel["OTel Collector"]
     Agents -.->|"OTLP"| OTel
     OTel --> MLflow["MLflow"]
-    OTel --> Jaeger["Jaeger"]
-    OTel --> Tempo["Tempo + Grafana"]
+    OTel --> Tempo["Tempo"]
+    Tempo --> Grafana["Grafana"]
 ```
 
 ## Project Structure
@@ -83,8 +83,11 @@ catalyst-lab/
 ├── mlflow/                 # MLflow experiment tracking
 │   ├── deployment.yaml     # MLflow server
 │   └── README.md
-├── jaeger/                 # Distributed tracing
-│   ├── deployment.yaml     # Jaeger all-in-one
+├── tempo/                  # Distributed tracing backend
+│   ├── tempo-minimal-values.yaml  # Tempo Helm values
+│   ├── ingress.yaml        # Tempo UI ingress
+│   └── README.md
+├── jaeger/                 # DEPRECATED (replaced by Tempo, March 2026)
 │   └── README.md
 ├── grafana/                # Grafana dashboards
 │   ├── catalyst-lab-overview.json  # Dashboard export
@@ -126,9 +129,8 @@ catalyst-lab/
 | Qwen3-Embedding-8B | Qwen | Embedding model for RAG |
 | PostgreSQL | 17 (CNPG) | Shared database (3 DBs) |
 | OTel Collector | contrib:latest | Telemetry pipeline |
-| MLflow | latest | Experiment tracking |
-| Jaeger | latest | Trace visualization |
-| Tempo | 2.6.1 | Grafana-native tracing |
+| MLflow | latest | Experiment tracking + custom trace metadata |
+| Tempo | 2.6.1 (distributed) | Distributed tracing backend |
 | Grafana | latest | Dashboards |
 | Prometheus | latest | Metrics |
 | Kiali | latest | Istio mesh topology |
@@ -163,8 +165,9 @@ kubectl apply -f llamastack/llamastack.yaml
 # 4. MLflow -- experiment tracking
 kubectl apply -f mlflow/deployment.yaml -f mlflow/service.yaml
 
-# 5. Jaeger -- trace visualization
-kubectl apply -f jaeger/
+# 5. Tempo -- distributed tracing backend
+helm repo add grafana https://grafana.github.io/helm-charts && helm repo update
+helm install tempo grafana/tempo-distributed -n catalystlab-shared -f tempo/tempo-minimal-values.yaml
 
 # 6. Kagent -- agent orchestration (Helm)
 helm install kagent oci://cr.kagent.dev/kagent-dev/kagent/charts/kagent \

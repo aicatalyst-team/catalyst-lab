@@ -145,9 +145,10 @@ data:
         headers:
           x-mlflow-experiment-id: "1"
 
-      # Jaeger for distributed trace visualization and dependency graphs
-      otlp_grpc/jaeger:
-        endpoint: "http://jaeger-collector.catalystlab-shared.svc.cluster.local:4317"
+      # Tempo for Grafana-native tracing (service graphs, node graph, dashboards)
+      # Replaced Jaeger on 2026-03-12. Grafana datasource already configured.
+      otlp_grpc/tempo:
+        endpoint: "http://tempo-distributor.catalystlab-shared.svc.cluster.local:4317"
         tls:
           insecure: true
 
@@ -161,7 +162,7 @@ data:
         traces:
           receivers: [otlp]
           processors: [filter/drop-probes, transform, batch]
-          exporters: [otlp_http, otlp_grpc/jaeger, spanmetrics, servicegraph]
+          exporters: [otlp_http, otlp_grpc/tempo, spanmetrics, servicegraph]
         metrics:
           receivers: [spanmetrics, servicegraph]
           exporters: [prometheus]
