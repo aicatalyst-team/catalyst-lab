@@ -2,6 +2,8 @@
 
 > 📝 **CONFIGURATION NOTE**: This README uses placeholders for environment-specific values. Before deployment, update `ingress.yaml` with your cluster's external IP. Replace `<CLUSTER_IP>` in examples with your nginx ingress external IP.
 
+> 🔄 **ARCHITECTURE NOTE**: The MLflow middleware and enrichment service approach was abandoned on March 17, 2026. Traces now flow directly from LlamaStack (via `opentelemetry-instrument` auto-instrumentation) → OTel Collector → MLflow `/v1/traces` OTLP endpoint. GenAI semantic conventions are captured by OpenTelemetry instrumentation libraries, not custom middleware.
+
 Deploy MLflow as an LLM trace viewer and experiment tracking system in the `catalystlab-shared` namespace. This deployment uses CNPG PostgreSQL for metadata storage and integrates with OpenTelemetry for distributed trace collection from LLaMA Stack inference pipelines.
 
 **Target cluster:** `<CLUSTER_IP>`
@@ -314,7 +316,7 @@ The canonical OTel collector config is in [`../otel-collector/otel-collector.yam
 kubectl apply -f ../otel-collector/otel-collector.yaml
 ```
 
-The canonical config includes probe filtering, MLflow spanType injection, and fan-out to MLflow + Jaeger + Tempo. See [`../otel-collector/README.md`](../otel-collector/README.md) for details.
+The canonical config includes probe filtering, MLflow spanType injection, and fan-out to MLflow + Tempo. See [`../otel-collector/README.md`](../otel-collector/README.md) for details.
 
 Verify the OTel Collector is running:
 
@@ -560,6 +562,23 @@ Trace: tr-b920c37547d7953abce2f1b92b28f574
 
 The `parent_span_id` field creates this hierarchy, allowing MLflow and Jaeger to display waterfall views.
 
+### What IS Being Captured
+
+✅ **OpenTelemetry Span Attributes:**
+- GenAI semantic conventions (`gen_ai.operation.name`, `gen_ai.request.model`, etc.)
+- HTTP attributes (`http.method`, `http.url`, `http.status_code`)
+- Service topology (`peer.service` for downstream services)
+- Performance metrics (span duration, timestamps)
+- Token usage (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`)
+
+✅ **LLM Metadata (from span attributes):**
+- Model name, operation name, conversation ID
+- Agent name, session ID, user ID
+- Token usage (input, output, total)
+- Source detection (may require custom tagging)
+
+> **Note on Request/Response Content**: OpenTelemetry instrumentation can capture prompt/completion content via log records (when `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`), but this data is emitted as log events, not span attributes. MLflow's current trace ingestion only processes span attributes, so request/response previews are not populated in the UI today. This could be enabled in the future by configuring a LoggerProvider and routing logs to MLflow alongside traces.
+
 ### What's NOT Being Captured
 
 ❌ **Server-side metrics from vLLM:**
@@ -573,15 +592,288 @@ The `parent_span_id` field creates this hierarchy, allowing MLflow and Jaeger to
 - VRAM usage
 - Batch processing details
 
-❌ **Request/response content:**
-- Actual prompt text (not captured for privacy/security)
-- Generated response text
-- Only metadata and token counts available
-
 ❌ **vLLM internals:**
 - Queue wait time
 - Attention mechanism performance
 - KV cache statistics
+
+❌ **Database query content:**
+- SQL statement text is captured but truncated to 200 characters
+- Full query plans not captured
+
+## Generating Enhanced and System Spans
+
+### TL;DR - What's Already Working
+
+✅ **Auto-instrumentation IS active and IS generating enhanced GenAI data**
+- Every LLM call automatically creates spans with full GenAI semantic conventions
+- `opentelemetry-instrumentation-openai-v2` captures model, tokens, temperature, finish reasons, etc.
+- OTel Collector transforms inject `mlflow.spanType` and other metadata
+- **No code changes required** - this is already deployed and operational
+
+✅ **You only need manual instrumentation for custom application logic**
+- Add spans for data retrieval, preprocessing, business logic
+- Nest spans to show multi-step workflows
+- LLM calls and HTTP requests are already fully instrumented
+
+### Detailed Overview
+
+The MLflow observability stack supports two levels of instrumentation:
+
+1. **Auto-instrumentation** (via `opentelemetry-instrument`): **Already active** - Automatically captures HTTP requests and **full GenAI semantic conventions** for all LLM calls (model, tokens, temperature, etc.). **This is the primary source of MLflow UI data.**
+2. **Enhanced spans** (manual instrumentation): Add **custom business logic spans** with application-specific attributes, events, and nested hierarchies
+
+### Auto-Instrumentation (Already Active)
+
+**This is already running in production** and generates the majority of data visible in MLflow UI.
+
+LlamaStack pods use `opentelemetry-instrument` as the entrypoint to automatically instrument:
+
+- **FastAPI HTTP requests** (via `opentelemetry-instrumentation-fastapi`)
+- **OpenAI SDK calls** (via `opentelemetry-instrumentation-openai-v2`) - **Generates full GenAI semantic conventions**
+
+**Current configuration:**
+```dockerfile
+ENTRYPOINT ["opentelemetry-instrument", "llama", "stack", "run"]
+```
+
+**What it automatically captures (no code changes required):**
+
+**GenAI attributes (from `opentelemetry-instrumentation-openai-v2`):**
+- `gen_ai.operation.name`: "chat", "embedding", etc.
+- `gen_ai.system`: "openai"
+- `gen_ai.request.model`: Full model name
+- `gen_ai.request.temperature`, `gen_ai.request.max_tokens`, `gen_ai.request.seed`
+- `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`
+- `gen_ai.response.id`, `gen_ai.response.model`, `gen_ai.response.finish_reasons`
+- `peer.service`: "vllm", "llamastack", etc.
+
+**HTTP attributes (from `opentelemetry-instrumentation-fastapi`):**
+- `http.method`, `http.url`, `http.status_code`
+- `http.target`, `http.host`, `http.user_agent`
+
+**These auto-generated attributes may be used by MLflow** for:
+- Version display (from `gen_ai.request.model`)
+- Token metrics (from `gen_ai.usage.input_tokens` / `output_tokens`)
+- Trace identification (from span name)
+- Service topology (from `peer.service`)
+
+**You only need manual instrumentation for custom application logic**, not for LLM calls (those are already fully instrumented).
+
+### Creating Enhanced Spans with Manual Instrumentation
+
+**When to use manual instrumentation:**
+- Add custom business logic spans (data retrieval, preprocessing, post-processing)
+- Nest spans to show multi-step workflows
+- Add application-specific attributes not captured by auto-instrumentation
+- Track custom events and milestones
+
+**You do NOT need manual instrumentation for:**
+- LLM inference calls (already instrumented by `opentelemetry-instrumentation-openai-v2`)
+- HTTP requests (already instrumented by `opentelemetry-instrumentation-fastapi`)
+
+To add custom spans, use the OpenTelemetry Python SDK directly:
+
+#### Step 1: Install OpenTelemetry SDK
+
+```bash
+pip install opentelemetry-api opentelemetry-sdk
+```
+
+#### Step 2: Get a tracer
+
+```python
+from opentelemetry import trace
+
+tracer = trace.get_tracer(__name__)
+```
+
+#### Step 3: Create custom spans
+
+```python
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+tracer = trace.get_tracer(__name__)
+
+# Create a span
+with tracer.start_as_current_span("custom-operation") as span:
+    # Add attributes
+    span.set_attribute("user.id", "alice")
+    span.set_attribute("session.id", "session-123")
+    span.set_attribute("model.name", "llama-3-8b")
+
+    # Add events
+    span.add_event("Processing started", {
+        "queue.size": 5,
+        "cache.hit": True
+    })
+
+    # Your business logic here
+    result = process_request()
+
+    # Set status
+    if result.success:
+        span.set_status(Status(StatusCode.OK))
+    else:
+        span.set_status(Status(StatusCode.ERROR, "Processing failed"))
+        span.record_exception(result.error)
+```
+
+#### Step 4: Nest spans for hierarchy
+
+```python
+with tracer.start_as_current_span("parent-operation") as parent:
+    parent.set_attribute("operation.type", "batch")
+
+    for item in batch:
+        with tracer.start_as_current_span(f"process-item-{item.id}") as child:
+            child.set_attribute("item.id", item.id)
+            child.set_attribute("item.type", item.type)
+            process_item(item)
+```
+
+### GenAI Semantic Conventions
+
+For LLM operations, follow OpenTelemetry GenAI semantic conventions:
+
+```python
+with tracer.start_as_current_span("llm-inference") as span:
+    # Request attributes
+    span.set_attribute("gen_ai.operation.name", "chat")
+    span.set_attribute("gen_ai.system", "openai")
+    span.set_attribute("gen_ai.request.model", "gpt-4")
+    span.set_attribute("gen_ai.request.temperature", 0.7)
+    span.set_attribute("gen_ai.request.max_tokens", 512)
+
+    # Conversation context
+    span.set_attribute("gen_ai.conversation.id", "conv-abc123")
+    span.set_attribute("gen_ai.agent.name", "customer-support-bot")
+
+    # Make LLM call
+    response = llm.chat(messages)
+
+    # Response attributes
+    span.set_attribute("gen_ai.response.id", response.id)
+    span.set_attribute("gen_ai.response.model", response.model)
+    span.set_attribute("gen_ai.response.finish_reasons", response.finish_reasons)
+
+    # Token usage
+    span.set_attribute("gen_ai.usage.input_tokens", response.usage.prompt_tokens)
+    span.set_attribute("gen_ai.usage.output_tokens", response.usage.completion_tokens)
+```
+
+**These attributes are captured in span data** and may be used for trace analysis:
+- `gen_ai.conversation.id` → Session identifier
+- `gen_ai.agent.name` → Agent/user identifier
+- `gen_ai.request.model` → Model version
+- `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` → Token usage metrics
+
+### Complete Example: Custom Instrumented Function
+
+```python
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+tracer = trace.get_tracer(__name__)
+
+async def process_user_query(user_id: str, query: str, session_id: str):
+    """Process a user query with full instrumentation."""
+
+    with tracer.start_as_current_span("process-user-query") as span:
+        # Add user context
+        span.set_attribute("user.id", user_id)
+        span.set_attribute("session.id", session_id)
+        span.set_attribute("query.length", len(query))
+
+        try:
+            # Step 1: Retrieve context
+            with tracer.start_as_current_span("retrieve-context") as ctx_span:
+                ctx_span.set_attribute("retrieval.method", "vector-search")
+                context = await retrieve_context(query)
+                ctx_span.set_attribute("retrieval.results", len(context))
+                ctx_span.add_event("Context retrieved", {
+                    "chunks": len(context),
+                    "avg_score": context.avg_score
+                })
+
+            # Step 2: Call LLM
+            with tracer.start_as_current_span("llm-inference") as llm_span:
+                # GenAI semantic conventions
+                llm_span.set_attribute("gen_ai.operation.name", "chat")
+                llm_span.set_attribute("gen_ai.system", "openai")
+                llm_span.set_attribute("gen_ai.request.model", "llama-3-70b")
+                llm_span.set_attribute("gen_ai.conversation.id", session_id)
+                llm_span.set_attribute("gen_ai.agent.name", "rag-assistant")
+
+                response = await llm.chat(
+                    messages=[
+                        {"role": "system", "content": context},
+                        {"role": "user", "content": query}
+                    ]
+                )
+
+                # Response attributes
+                llm_span.set_attribute("gen_ai.usage.input_tokens", response.usage.prompt_tokens)
+                llm_span.set_attribute("gen_ai.usage.output_tokens", response.usage.completion_tokens)
+                llm_span.set_attribute("gen_ai.response.finish_reasons", response.finish_reasons)
+
+            # Step 3: Post-process
+            with tracer.start_as_current_span("post-process") as post_span:
+                post_span.set_attribute("response.length", len(response.text))
+                result = post_process(response)
+
+            span.set_status(Status(StatusCode.OK))
+            return result
+
+        except Exception as e:
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            span.record_exception(e)
+            raise
+```
+
+**This will create a trace with:**
+- Parent span: `process-user-query` (with user context)
+- Child span 1: `retrieve-context` (with retrieval metrics)
+- Child span 2: `llm-inference` (with GenAI attributes from auto-instrumentation)
+- Child span 3: `post-process` (with result metrics)
+
+### Verifying Custom Spans in MLflow
+
+After creating custom spans:
+
+1. **Check MLflow UI:**
+   - Go to `http://mlflow.<CLUSTER_IP>.nip.io`
+   - Navigate to Experiments → llamastack-traces → Traces tab
+   - Find your trace by timestamp or session ID
+   - Verify waterfall view shows span hierarchy
+
+2. **Query database directly:**
+```bash
+kubectl exec -n catalystlab-shared pgvector-cluster-1 -- \
+  psql -U postgres -d mlflow -c "
+    SELECT name, type, content::json->'attributes'->'session.id'
+    FROM spans
+    WHERE content::json->'attributes'->>'session.id' = 'session-123'
+    ORDER BY start_time_unix_nano DESC
+    LIMIT 10;
+  "
+```
+
+### Best Practices
+
+✅ **DO:**
+- Use GenAI semantic conventions for LLM operations
+- Add `user.id`, `session.id`, and `conversation.id` attributes
+- Create nested spans for multi-step operations
+- Set span status (`OK` or `ERROR`) and record exceptions
+- Add events for significant milestones within a span
+
+❌ **DON'T:**
+- Capture sensitive data (passwords, API keys, PII) in attributes
+- Create spans for operations < 1ms (noise)
+- Nest spans > 10 levels deep (readability)
+- Add > 50 attributes per span (performance)
 
 ### Data Flow
 
@@ -690,7 +982,7 @@ The `peer.service: "vllm"` tag enables:
 
 ✅ **Kiali service topology:** Shows llamastack → vllm connection with live traffic metrics
 
-✅ **Jaeger dependencies view:** Shows service relationships (static graph)
+✅ **Tempo service graph:** Query and visualize service relationships via Grafana
 
 ✅ **Service filtering:** Query traces by downstream service
 
@@ -830,61 +1122,78 @@ The OTel Collector requires an experiment ID before it can forward traces. This 
 ## Architecture
 
 ```
-LLaMA Stack ──(OTel SDK)──► OTel Collector ──(otlphttp)──► MLflow /v1/traces
-  :8321                        :4317/:4318                      :5000
-                                                                  │
-                                          ┌───────────────────────┤
-                                          ▼                       ▼
-                                    PostgreSQL              PVC (artifacts)
-                                   (metadata)              /mlflow/artifacts
+LLaMA Stack ──(OTel SDK)──► OTel Collector ──(otlphttp)──┬──► MLflow /v1/traces
+  :8321                        :4317/:4318                │        :5000
+  (opentelemetry-instrument)                             │          │
+                                                         │  ┌───────┴────────┐
+                                                         │  │                │
+                                                         │  ▼                ▼
+                                                         │ PostgreSQL   PVC (artifacts)
+                                                         │  (mlflow)   /mlflow/artifacts
+                                                         │
+                                                         └──► Tempo Distributor
+                                                              (distributed tracing)
 ```
 
 **Data flow:**
-1. LLaMA Stack emits OpenTelemetry spans during inference
-2. OTel Collector receives spans on gRPC (4317) or HTTP (4318)
-3. OTel Collector exports to MLflow's OTLP endpoint (`/v1/traces`)
-4. MLflow stores trace metadata in PostgreSQL (`mlflow` database)
-5. MLflow stores artifacts in PVC-backed filesystem
-6. Users access traces and experiments via MLflow UI (port 5000)
+1. **LLaMA Stack** emits OpenTelemetry spans during inference (via `opentelemetry-instrument` auto-instrumentation with GenAI semantic conventions)
+2. **OTel Collector** receives spans on gRPC (4317) or HTTP (4318), applies transformations (probe filtering, spanType injection)
+3. **OTel Collector** fans out to MLflow (`/v1/traces` OTLP endpoint) and Tempo (distributed tracing backend)
+4. **MLflow** stores trace metadata in PostgreSQL (`mlflow` database) and artifacts in PVC
+5. Users access traces and experiments via **MLflow UI** (port 5000)
 
-## Optional: Jaeger Integration
+## Tempo Integration
 
-> **Note**: Jaeger is an optional complementary tool. MLflow provides full trace functionality independently.
+> **Note**: Tempo is a complementary distributed tracing backend. MLflow provides full trace functionality independently.
 
-Jaeger can be deployed alongside MLflow to provide service graph visualization that complements MLflow's waterfall timeline views:
+Grafana Tempo is deployed alongside MLflow to provide long-term trace storage and service graph visualization via Grafana:
 
-| Feature | MLflow | Jaeger |
+| Feature | MLflow | Tempo |
 |---------|--------|--------|
-| Waterfall/Timeline View | ✅ Excellent | ✅ Basic |
-| Service Dependency Graph | ❌ Not available | ✅ Excellent |
+| Waterfall/Timeline View | ✅ Excellent | ✅ Via Grafana |
+| Service Dependency Graph | ❌ Not available | ✅ Via Grafana |
 | Experiment Tracking | ✅ Full support | ❌ Not available |
+| Web UI | ✅ Built-in | ❌ API-only (use Grafana) |
+| Long-term Storage | ✅ PostgreSQL | ✅ Object storage |
 
 ### When to Use Each Tool
 
-- **Use MLflow for**: Historical trace analysis, experiment tracking, waterfall views, persistent storage
-- **Use Jaeger for**: Service architecture visualization, dependency analysis, troubleshooting service communication
+- **Use MLflow for**: Experiment tracking, waterfall views, LLM-specific metadata (tokens, prompts, responses)
+- **Use Tempo for**: Service architecture visualization, distributed trace correlation, long-term trace retention
 
-### Architecture with Jaeger
+### Architecture with Tempo
 
 ```
-LLaMA Stack → OTel Collector ─┬─► MLflow (waterfall views, experiments)
-                               └─► Jaeger (service graphs, dependencies)
+LLaMA Stack → OTel Collector ─┬─► MLflow (waterfall views, experiments, LLM metadata)
+                               └─► Tempo (distributed tracing, service graphs)
 ```
 
 Both systems receive the same traces from the OTel Collector via fan-out configuration.
 
 ### Deployment
 
-See [../jaeger/README.md](../jaeger/README.md) for complete Jaeger deployment instructions.
+Tempo is already deployed in `catalystlab-shared` namespace. See [../tempo/README.md](../tempo/README.md) for configuration details.
 
 ### Access URLs
 
 - **MLflow UI**: http://mlflow.<CLUSTER_IP>.nip.io
-- **Jaeger UI** (if deployed): http://jaeger.<CLUSTER_IP>.nip.io
+- **Tempo API**: http://tempo.<CLUSTER_IP>.nip.io
+- **Grafana** (for Tempo visualization): Configure Tempo as a data source in Grafana
 
-### Security Warning
+### Tempo API Endpoints
 
-⚠️ Jaeger deployment requires security review. See [Jaeger Security Considerations](../jaeger/README.md#security-considerations) for details.
+Tempo has no web UI. Access traces via API or Grafana:
+
+```bash
+# Health check
+curl http://tempo.<CLUSTER_IP>.nip.io/api/echo
+
+# Get trace by ID
+curl http://tempo.<CLUSTER_IP>.nip.io/api/traces/{traceID}
+
+# Search traces
+curl http://tempo.<CLUSTER_IP>.nip.io/api/search
+```
 
 ## Operational Notes
 
@@ -899,11 +1208,34 @@ See [../jaeger/README.md](../jaeger/README.md) for complete Jaeger deployment in
 | Artifact store | PVC `/mlflow/artifacts` (10Gi, `local-path`) |
 | Experiment | `llamastack-traces` -- ID **1** (active, receiving traces) |
 
-### Known Limitations
+### Known Limitations and Current Status
 
-- **Request/response preview columns are empty** -- `opentelemetry-instrumentation-openai-v2` v2.3b0 emits content via OTel EventLogger (log records), not span events. MLflow only reads span events/attributes. Blocked on upstream adoption of `SPAN_AND_EVENT` mode from `opentelemetry-util-genai`.
-- **Span type column** -- Fixed via OTTL transform in the OTel collector (`mlflow.spanType` injected from `gen_ai.operation.name`).
-- **Token usage IS present** -- `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `mlflow.chat.tokenUsage` are populated on spans.
+❌ **NOT CAPTURED: Request/response preview columns**
+- OpenTelemetry instrumentation can capture prompt/completion content via log records (when `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`)
+- However, this data is emitted as log events, not span attributes
+- MLflow's trace ingestion only processes span attributes, so `trace_info.request_preview` / `response_preview` remain empty
+- **Previous middleware approach was abandoned** - too complex and not supported upstream
+- Could be enabled in future by configuring LoggerProvider and routing logs to MLflow
+
+❓ **UNKNOWN: MLflow UI metadata columns (Source, Version, Tokens, User, Session)**
+- **Previous enrichment service was abandoned** along with middleware effort (March 17, 2026)
+- MLflow may natively extract some metadata from GenAI span attributes
+- Current population status of these UI columns needs verification
+- See section below for verification steps
+
+✅ **WORKING: Span type attribute**
+- OTel Collector OTTL transform injects `mlflow.spanType` from `gen_ai.operation.name`
+- Populated before trace reaches MLflow
+
+✅ **WORKING: Token usage**
+- `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` captured by OpenTelemetry instrumentation
+- `mlflow.chat.tokenUsage` injected by OTel Collector transform
+- Token metrics available in span attributes for analysis
+
+⚠️ **Remaining limitations:**
+- **No server-side vLLM metrics**: Only client-side perspective (no Istio sidecar in KServe pods)
+- **Truncated previews**: Request/Response limited to 1000 characters due to database column size
+- **Source detection**: Depends on `peer.service` attribute being set by OTel Collector
 
 ### OTel Collector Ownership
 
@@ -914,6 +1246,7 @@ The OTel collector config for `catalystlab-shared` is managed in [`../otel-colle
 - [MLflow Documentation](https://mlflow.org/docs/latest/index.html)
 - [CloudNativePG Documentation](https://cloudnative-pg.io/documentation/)
 - [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
+- [OpenTelemetry Python SDK](https://opentelemetry.io/docs/languages/python/)
+- [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
 - [LLaMA Stack](https://github.com/meta-llama/llama-stack)
-- [Jaeger Documentation](https://www.jaegertracing.io/docs/latest/) (optional integration)
-- [Grafana Tempo](https://grafana.com/docs/tempo/latest/) (optional integration)
+- [Grafana Tempo](https://grafana.com/docs/tempo/latest/)
