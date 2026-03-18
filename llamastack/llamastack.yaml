@@ -31,8 +31,12 @@ spec:
         - name: llamastack
           # Custom image: OTel instrumentation + Agents API hotfix baked in.
           # See Containerfile for details. Upstream issue: meta-llama/llama-stack#4996
-          image: quay.io/aicatalyst/llamastack-starter:0.5.1-patched
+          image: quay.io/rh-ee-gtrotman/llamastack-starter:otel-1773791762
           imagePullPolicy: Always
+          # Explicitly set command to use opentelemetry-instrument wrapper
+          # (image ENTRYPOINT is not being respected by Kubernetes for unknown reason)
+          command: ["opentelemetry-instrument", "llama", "stack", "run"]
+          args: ["/etc/llama-stack/config.yaml"]
           ports:
             - containerPort: 8321
           env:
@@ -58,6 +62,10 @@ spec:
               value: "urllib3,httpx"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://otel-collector.catalystlab-shared.svc.cluster.local:4317"
+            - name: OTEL_LOG_LEVEL
+              value: "debug"
+            - name: OTEL_PYTHON_LOG_LEVEL
+              value: "debug"
             # Enable prompt/completion content capture in OTel log records.
             # Note: openai-v2 v2.3b0 emits content via EventLogger (log records),
             # NOT span attributes — so this does NOT populate MLflow request/response

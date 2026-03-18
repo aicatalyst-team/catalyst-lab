@@ -73,3 +73,7 @@ Document discovered caveats and gotchas in the component README — this repo se
 - Use `secretKeyRef` / `configMapKeyRef` — never literal credential values
 - Use `<PLACEHOLDER>` for values that must be filled in before applying
 - Add comments explaining non-obvious configuration choices
+
+## Journal Plugin
+
+This project uses journal-plugin for session logging. Run `/log` to capture insights from each work session.
