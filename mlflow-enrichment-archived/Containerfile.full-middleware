@@ -1,0 +1,69 @@
+# LlamaStack with full MLflow middleware for immediate trace enrichment
+# This middleware writes directly to MLflow PostgreSQL to populate trace_tags,
+# trace_info, and trace_request_metadata tables immediately (within 5s).
+
+FROM docker.io/llamastack/distribution-starter@sha256:9f83d467ac874a3a4ca882485736ba2b4d63f5ccdc4cf1b9519e3123c92f790e
+
+# Install dependencies: MLflow SDK + psycopg2 for database writes
+RUN pip install --no-cache-dir \
+    mlflow \
+    psycopg2-binary \
+    opentelemetry-instrumentation-fastapi \
+    opentelemetry-instrumentation-openai-v2
+
+# Apply upstream bugfixes
+RUN sed -i \
+    's/return "".join(self.content)/return "".join(c for c in self.content if c is not None)/g' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/types.py \
+  && sed -i \
+    's/final_text = "".join(chat_response_content)/final_text = "".join(c for c in chat_response_content if c is not None)/g' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/streaming.py \
+  && sed -i \
+    's/accumulated_text = "".join(chat_response_content)/accumulated_text = "".join(c for c in chat_response_content if c is not None)/g' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/providers/inline/agents/meta_reference/responses/streaming.py \
+  && sed -i '/dimensions=embedding_dimension,/d' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/providers/utils/memory/openai_vector_store_mixin.py
+
+# Copy the full MLflow middleware
+COPY mlflow_middleware.py /usr/local/lib/python3.12/site-packages/llama_stack/core/server/
+
+# Inject middleware into server.py using Python script for robust indentation
+RUN python3 <<'EOF'
+import re
+
+server_py_path = "/usr/local/lib/python3.12/site-packages/llama_stack/core/server/server.py"
+
+with open(server_py_path, 'r') as f:
+    content = f.read()
+
+# Add import after other imports
+if 'from .mlflow_middleware import MLflowTracingMiddleware' not in content:
+    import_pattern = r'(from \.[a-zA-Z_]+ import [^\n]+\n)'
+    matches = list(re.finditer(import_pattern, content))
+    if matches:
+        last_import = matches[-1]
+        insert_pos = last_import.end()
+        content = content[:insert_pos] + 'from .mlflow_middleware import MLflowTracingMiddleware\n' + content[insert_pos:]
+
+# Add middleware after app creation
+if 'app.add_middleware(MLflowTracingMiddleware)' not in content:
+    middleware_pattern = r'(\n)([ \t]+)(app\.add_middleware\()'
+    match = re.search(middleware_pattern, content)
+    if match:
+        newline = match.group(1)
+        indent = match.group(2)
+        insert_pos = match.start() + len(newline)
+        content = content[:insert_pos] + f'{indent}app.add_middleware(MLflowTracingMiddleware)\n' + content[insert_pos:]
+
+with open(server_py_path, 'w') as f:
+    f.write(content)
+
+print("MLflow middleware injected successfully")
+EOF
+
+# Verify injection
+RUN grep -q "MLflowTracingMiddleware" /usr/local/lib/python3.12/site-packages/llama_stack/core/server/server.py \
+    || (echo "ERROR: MLflow middleware injection failed" && exit 1)
+
+ENTRYPOINT ["opentelemetry-instrument", "llama", "stack", "run"]
+CMD ["/etc/llama-stack/config.yaml"]

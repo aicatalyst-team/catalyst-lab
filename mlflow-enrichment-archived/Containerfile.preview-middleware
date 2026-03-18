@@ -1,0 +1,52 @@
+# LlamaStack with preview middleware for request/response capture
+# This middleware writes HTTP bodies directly to MLflow trace_info table.
+# Works together with enrichment service to populate all MLflow UI columns.
+
+FROM quay.io/aicatalyst/llamastack-starter:0.5.1-patched
+
+# Install psycopg2 for direct database writes
+RUN pip install --no-cache-dir psycopg2-binary
+
+# Copy the preview middleware
+COPY preview_middleware.py /usr/local/lib/python3.12/site-packages/llama_stack/core/server/
+
+# Inject middleware into server.py using Python script for robust indentation
+RUN python3 <<'EOF'
+import re
+
+server_py_path = "/usr/local/lib/python3.12/site-packages/llama_stack/core/server/server.py"
+
+with open(server_py_path, 'r') as f:
+    content = f.read()
+
+# Add import after other imports
+if 'from .preview_middleware import PreviewCaptureMiddleware' not in content:
+    import_pattern = r'(from \.[a-zA-Z_]+ import [^\n]+\n)'
+    matches = list(re.finditer(import_pattern, content))
+    if matches:
+        last_import = matches[-1]
+        insert_pos = last_import.end()
+        content = content[:insert_pos] + 'from .preview_middleware import PreviewCaptureMiddleware\n' + content[insert_pos:]
+
+# Add middleware after app creation
+if 'app.add_middleware(PreviewCaptureMiddleware)' not in content:
+    middleware_pattern = r'(\n)([ \t]+)(app\.add_middleware\()'
+    match = re.search(middleware_pattern, content)
+    if match:
+        newline = match.group(1)
+        indent = match.group(2)
+        insert_pos = match.start() + len(newline)
+        content = content[:insert_pos] + f'{indent}app.add_middleware(PreviewCaptureMiddleware)\n' + content[insert_pos:]
+
+with open(server_py_path, 'w') as f:
+    f.write(content)
+
+print("Preview middleware injected successfully")
+EOF
+
+# Verify injection
+RUN grep -q "PreviewCaptureMiddleware" /usr/local/lib/python3.12/site-packages/llama_stack/core/server/server.py \
+    || (echo "ERROR: Preview middleware injection failed" && exit 1)
+
+ENTRYPOINT ["opentelemetry-instrument", "llama", "stack", "run"]
+CMD ["/etc/llama-stack/config.yaml"]

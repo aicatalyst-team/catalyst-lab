@@ -1,0 +1,28 @@
+# Minimal Containerfile for MLflow tracing middleware
+# This only adds MLflow dependencies and the middleware - no upstream bugfixes
+# Use this for cleaner maintenance when upstream bugs are fixed
+
+FROM docker.io/llamastack/distribution-starter@sha256:9f83d467ac874a3a4ca882485736ba2b4d63f5ccdc4cf1b9519e3123c92f790e
+
+# Install MLflow and required dependencies
+RUN pip install --no-cache-dir \
+    mlflow>=2.16.0 \
+    psycopg2-binary
+
+# Copy the MLflow middleware
+COPY mlflow_middleware.py /usr/local/lib/python3.12/site-packages/llama_stack/core/server/
+
+# Inject the middleware into server.py
+RUN sed -i '/^from \.quota import QuotaMiddleware/a from .mlflow_middleware import MLflowTracingMiddleware' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/core/server/server.py
+
+RUN sed -i '/app\.add_middleware(ClientVersionMiddleware)/a\    app.add_middleware(MLflowTracingMiddleware)' \
+    /usr/local/lib/python3.12/site-packages/llama_stack/core/server/server.py
+
+# Verify injection
+RUN grep -q "MLflowTracingMiddleware" /usr/local/lib/python3.12/site-packages/llama_stack/core/server/server.py \
+    || (echo "ERROR: MLflow middleware injection failed" && exit 1)
+
+# Use the same entrypoint as upstream (opentelemetry-instrument is already in the base image)
+ENTRYPOINT ["opentelemetry-instrument", "llama", "stack", "run"]
+CMD ["/etc/llama-stack/config.yaml"]

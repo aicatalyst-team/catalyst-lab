@@ -1,0 +1,35 @@
+# Patch for llamastack deployment to inject MLflow middleware via ConfigMap
+# This allows adding MLflow tracing without maintaining a custom image
+#
+# Apply with: kubectl patch deployment llamastack -n catalystlab-shared --patch-file deployment-mlflow-patch.yaml
+#
+# Prerequisites:
+# 1. Apply mlflow-configmap.yaml first: kubectl apply -f mlflow-configmap.yaml
+# 2. Ensure MLflow is deployed and accessible
+
+spec:
+  template:
+    spec:
+      containers:
+      - name: llamastack
+        # Use upstream llamastack image - no custom build needed
+        image: docker.io/llamastack/distribution-starter@sha256:9f83d467ac874a3a4ca882485736ba2b4d63f5ccdc4cf1b9519e3123c92f790e
+        imagePullPolicy: IfNotPresent
+        # Override command to use the injection script
+        command: ["/mlflow-config/inject-middleware.sh"]
+        args: ["/etc/llama-stack/config.yaml"]
+        # Add MLflow environment variables
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow.catalystlab-shared.svc.cluster.local:5000"
+        - name: MLFLOW_EXPERIMENT_NAME
+          value: "llamastack-traces"
+        volumeMounts:
+        - name: mlflow-middleware
+          mountPath: /mlflow-config
+          readOnly: true
+      volumes:
+      - name: mlflow-middleware
+        configMap:
+          name: llamastack-mlflow-middleware
+          defaultMode: 0755

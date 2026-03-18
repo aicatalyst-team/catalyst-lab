@@ -1,0 +1,594 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow-enrichment
+  namespace: catalystlab-shared
+  labels:
+    app: mlflow-enrichment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow-enrichment
+  template:
+    metadata:
+      labels:
+        app: mlflow-enrichment
+    spec:
+      containers:
+        - name: enrichment-service
+          image: python:3.11-slim
+          command:
+            - /bin/sh
+            - -c
+            - |
+              pip install --no-cache-dir psycopg2-binary && \
+              python /app/enrichment-service.py
+          env:
+            - name: MLFLOW_DB_HOST
+              value: "pgvector-cluster-rw.catalystlab-shared.svc.cluster.local"
+            - name: MLFLOW_DB_PORT
+              value: "5432"
+            - name: MLFLOW_DB_NAME
+              value: "mlflow"
+            - name: MLFLOW_DB_USER
+              value: "vectordb"
+            - name: MLFLOW_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-cluster-app
+                  key: password
+            - name: POLL_INTERVAL
+              value: "30"
+            - name: MAX_RETRIES
+              value: "10"
+            - name: RETRY_DELAY
+              value: "0.5"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: enrichment-script
+              mountPath: /app
+              readOnly: true
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "pgrep -f enrichment-service.py"
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: enrichment-script
+          configMap:
+            name: mlflow-enrichment-script
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlflow-enrichment-script
+  namespace: catalystlab-shared
+data:
+  enrichment-service.py: |
+    #!/usr/bin/env python3
+    """
+    MLflow Trace Enrichment Service
+
+    Polls MLflow PostgreSQL database for traces with null metadata and backfills
+    trace_tags, trace_info, and trace_request_metadata tables by extracting
+    gen_ai.* attributes from the spans.content JSONB field.
+
+    Handles traces from all sources (LlamaStack, Kagent agents, vLLM) uniformly.
+
+    Environment Variables:
+        MLFLOW_DB_HOST: PostgreSQL host (default: pgvector-cluster-rw.catalystlab-shared.svc.cluster.local)
+        MLFLOW_DB_PORT: PostgreSQL port (default: 5432)
+        MLFLOW_DB_NAME: Database name (default: mlflow)
+        MLFLOW_DB_USER: Database user (default: vectordb)
+        MLFLOW_DB_PASSWORD: Database password (required)  # pragma: allowlist secret
+        POLL_INTERVAL: Polling interval in seconds (default: 30)
+        MAX_RETRIES: Max retries for database writes (default: 10)
+        RETRY_DELAY: Delay between retries in seconds (default: 0.5)
+    """
+
+    import os
+    import sys
+    import time
+    import json
+    import logging
+    from typing import Optional, Dict, Any, List
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+
+    # Database connection parameters
+    DB_CONFIG = {
+        'host': os.environ.get('MLFLOW_DB_HOST', 'pgvector-cluster-rw.catalystlab-shared.svc.cluster.local'),
+        'port': int(os.environ.get('MLFLOW_DB_PORT', '5432')),
+        'database': os.environ.get('MLFLOW_DB_NAME', 'mlflow'),
+        'user': os.environ.get('MLFLOW_DB_USER', 'vectordb'),
+        'password': os.environ.get('MLFLOW_DB_PASSWORD', ''),
+    }
+
+    # Service configuration
+    POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', '30'))
+    MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '10'))
+    RETRY_DELAY = float(os.environ.get('RETRY_DELAY', '0.5'))
+
+
+    def get_db_connection():
+        """Create and return a PostgreSQL database connection."""
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            logger.info(f"Connected to PostgreSQL at {DB_CONFIG['host']}:{DB_CONFIG['port']}")
+            return conn
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {e}")
+            raise
+
+
+    def find_traces_needing_enrichment(cursor) -> List[str]:
+        """
+        Find traces that need enrichment (missing mlflow.source.name tag OR null previews).
+
+        Returns:
+            List of trace IDs (request_id format)
+        """
+        query = """
+            SELECT ti.request_id
+            FROM trace_info ti
+            LEFT JOIN trace_tags tt ON ti.request_id = tt.request_id AND tt.key = 'mlflow.source.name'
+            WHERE tt.value IS NULL OR ti.request_preview IS NULL OR ti.response_preview IS NULL
+            ORDER BY ti.timestamp_ms DESC
+            LIMIT 100
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+        trace_ids = [row['request_id'] for row in results]
+
+        if trace_ids:
+            logger.info(f"Found {len(trace_ids)} traces needing enrichment")
+
+        return trace_ids
+
+
+    def extract_trace_attributes(cursor, trace_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract attributes from spans for a given trace (gen_ai.* or http.* or generic).
+
+        Args:
+            cursor: Database cursor
+            trace_id: Trace ID (request_id format)
+
+        Returns:
+            Dictionary with extracted attributes or None if no spans found
+        """
+        # Query spans for this trace, ordered by start_time to get root span first
+        query = """
+            SELECT name, content
+            FROM spans
+            WHERE trace_id = %s
+            ORDER BY start_time_unix_nano ASC
+        """
+        cursor.execute(query, (trace_id,))
+        spans = cursor.fetchall()
+
+        if not spans:
+            logger.warning(f"No spans found for trace {trace_id}")
+            return None
+
+        # Extract attributes from all spans
+        extracted = {
+            'trace_name': spans[0]['name'],  # Root span name
+            'prompt': None,
+            'completion': None,
+            'conversation_id': None,
+            'agent_name': None,
+            'model_name': None,
+            'operation_name': None,
+            'trace_type': 'unknown',  # 'genai', 'http', or 'unknown'
+            'input_tokens': None,
+            'output_tokens': None,
+            'total_tokens': None,
+            'peer_service': None,  # For source detection (vllm, llamastack, etc.)
+        }
+
+        for span in spans:
+            content = span['content']
+            if not content:
+                continue
+
+            # Parse JSONB content
+            if isinstance(content, str):
+                try:
+                    content = json.loads(content)
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse span content for {trace_id}")
+                    continue
+
+            attributes = content.get('attributes', {})
+
+            # Try to extract gen_ai.* attributes (LLM inference traces)
+            if 'gen_ai.prompt.1.content' in attributes and not extracted['prompt']:
+                extracted['prompt'] = attributes['gen_ai.prompt.1.content']
+                extracted['trace_type'] = 'genai'
+
+            if 'gen_ai.completion.0.content' in attributes and not extracted['completion']:
+                extracted['completion'] = attributes['gen_ai.completion.0.content']
+                extracted['trace_type'] = 'genai'
+
+            if 'gen_ai.conversation.id' in attributes and not extracted['conversation_id']:
+                extracted['conversation_id'] = attributes['gen_ai.conversation.id']
+
+            if 'gen_ai.agent.name' in attributes and not extracted['agent_name']:
+                extracted['agent_name'] = attributes['gen_ai.agent.name']
+
+            if 'gen_ai.request.model' in attributes and not extracted['model_name']:
+                extracted['model_name'] = attributes['gen_ai.request.model']
+
+            if 'gen_ai.operation.name' in attributes and not extracted['operation_name']:
+                extracted['operation_name'] = attributes['gen_ai.operation.name']
+                # If we have gen_ai.operation.name, this is definitely a GenAI trace
+                extracted['trace_type'] = 'genai'
+
+            # Peer service (for source detection)
+            # Prefer peer.service from GenAI spans over HTTP spans
+            if 'peer.service' in attributes:
+                # If this span has gen_ai.operation.name, it's a GenAI span - prioritize its peer.service
+                if 'gen_ai.operation.name' in attributes:
+                    extracted['peer_service'] = attributes['peer.service']
+                # Otherwise only set if not already set
+                elif not extracted['peer_service']:
+                    extracted['peer_service'] = attributes['peer.service']
+
+            # Token usage
+            if 'gen_ai.usage.input_tokens' in attributes and not extracted['input_tokens']:
+                extracted['input_tokens'] = attributes['gen_ai.usage.input_tokens']
+
+            if 'gen_ai.usage.output_tokens' in attributes and not extracted['output_tokens']:
+                extracted['output_tokens'] = attributes['gen_ai.usage.output_tokens']
+
+            if extracted['input_tokens'] and extracted['output_tokens']:
+                try:
+                    extracted['total_tokens'] = int(extracted['input_tokens']) + int(extracted['output_tokens'])
+                except (ValueError, TypeError):
+                    pass
+
+            # Fallback: extract http.* attributes (HTTP request traces)
+            if not extracted['prompt'] and 'http.method' in attributes:
+                http_method = attributes.get('http.method', '').strip('"')
+                http_url = attributes.get('http.url', attributes.get('http.target', '')).strip('"')
+                http_host = attributes.get('http.host', '').strip('"')
+                http_user_agent = attributes.get('http.user_agent', '').strip('"')
+
+                extracted['prompt'] = f"{http_method} {http_url}"
+                if http_host:
+                    extracted['prompt'] += f" (Host: {http_host})"
+                if http_user_agent and http_user_agent != "Go-http-client/1.1":
+                    extracted['agent_name'] = http_user_agent
+                extracted['trace_type'] = 'http'
+
+            if not extracted['completion'] and 'http.status_code' in attributes:
+                http_status = attributes.get('http.status_code', '').strip('"')
+                http_duration = attributes.get('http.duration_ms', attributes.get('http.response_content_length', '')).strip('"')
+
+                extracted['completion'] = f"HTTP {http_status}"
+                if http_duration:
+                    extracted['completion'] += f" ({http_duration})"
+
+            # Fallback: extract db.* attributes (database query traces from SQLAlchemy/psycopg2)
+            if not extracted['prompt'] and 'db.statement' in attributes:
+                db_system = attributes.get('db.system', 'database').strip('"')
+                db_name = attributes.get('db.name', '').strip('"')
+                db_statement = attributes.get('db.statement', '').strip('"')
+
+                # Truncate long SQL statements
+                if len(db_statement) > 200:
+                    db_statement = db_statement[:200] + "..."
+
+                extracted['prompt'] = f"{db_system.upper()} {db_name}: {db_statement}"
+                extracted['completion'] = "Query executed"
+                extracted['trace_type'] = 'database'
+
+        logger.debug(f"Extracted attributes for {trace_id}: {extracted}")
+        return extracted
+
+
+    def enrich_trace(cursor, trace_id: str, attributes: Dict[str, Any]) -> bool:
+        """
+        Enrich trace by writing to trace_tags, trace_info, and trace_request_metadata.
+
+        Args:
+            cursor: Database cursor
+            trace_id: Trace ID (request_id format)
+            attributes: Extracted gen_ai.* attributes
+
+        Returns:
+            True if enrichment succeeded, False otherwise
+        """
+        try:
+            # 1. Insert/update trace_tags using MLflow-specific keys
+            tags = []
+
+            # MLflow User (mlflow.user) - from agent name or user agent
+            if attributes.get('agent_name'):
+                tags.append({
+                    'key': 'mlflow.user',
+                    'value': attributes['agent_name']
+                })
+            else:
+                tags.append({
+                    'key': 'mlflow.user',
+                    'value': 'system'
+                })
+
+            # MLflow Session (mlflow.session) - from conversation ID
+            if attributes.get('conversation_id'):
+                tags.append({
+                    'key': 'mlflow.session',
+                    'value': attributes['conversation_id']
+                })
+            else:
+                tags.append({
+                    'key': 'mlflow.session',
+                    'value': 'default'
+                })
+
+            # Trace name from root span name (already correct)
+            tags.append({
+                'key': 'mlflow.traceName',
+                'value': attributes.get('trace_name', 'inference')
+            })
+
+            # MLflow Version - extract from model name if available
+            version_value = 'v1.0'  # default
+            if attributes.get('model_name') and '/' in attributes['model_name']:
+                # Extract version from model name (e.g., "RedHatAI/Qwen3-Next-80B-A3B-Instruct-FP8" → "Qwen3-Next-80B-A3B-Instruct-FP8")
+                version_value = attributes['model_name'].split('/')[-1].strip('"')
+
+            tags.append({
+                'key': 'mlflow.version',
+                'value': version_value
+            })
+            # Also add tags without mlflow prefix (MLflow UI compatibility)
+            tags.append({
+                'key': 'version',
+                'value': version_value
+            })
+
+            # Add session.id and user.id for MLflow UI column display
+            tags.append({
+                'key': 'session.id',
+                'value': attributes.get('conversation_id') or 'default'
+            })
+            tags.append({
+                'key': 'user.id',
+                'value': attributes.get('agent_name') or 'system'
+            })
+
+            # MLflow Source (mlflow.source.name and mlflow.source.type)
+            source = 'unknown'
+            source_type = 'UNKNOWN'
+            trace_type = attributes.get('trace_type', 'unknown')
+
+            if trace_type == 'genai':
+                source_type = 'GENAI'
+                # Use peer.service for accurate source detection (set by OTel Collector)
+                # Remove all quotes and backslashes (PostgreSQL JSONB escapes quotes as "\"value\"")
+                peer_svc = attributes.get('peer_service', '').replace('"', '').replace('\\', '').lower()
+                if peer_svc == 'vllm' or peer_svc == 'vllm-embedding':
+                    source = 'vllm'
+                elif peer_svc == 'llamastack':
+                    source = 'llamastack'
+                elif attributes.get('agent_name') and 'curl' not in attributes.get('agent_name', '').lower():
+                    # Only use agent_name if it's not a generic HTTP client (curl, wget, etc.)
+                    source = 'kagent'
+                elif 'llamastack' in attributes.get('trace_name', '').lower():
+                    source = 'llamastack'
+                elif attributes.get('model_name'):
+                    source = 'vllm'
+                else:
+                    source = 'genai'
+            elif trace_type == 'http':
+                source_type = 'HTTP'
+                # Detect HTTP source from URL patterns
+                prompt = attributes.get('prompt', '')
+                if 'mcp' in prompt.lower():
+                    source = 'mcp'
+                elif 'ingress' in attributes.get('trace_name', '').lower():
+                    source = 'ingress'
+                else:
+                    source = 'http'
+            elif trace_type == 'database':
+                source_type = 'DATABASE'
+                # Database traces come from internal services (SQLAlchemy instrumentation)
+                source = 'llamastack'
+
+            tags.append({
+                'key': 'mlflow.source.name',
+                'value': source
+            })
+            tags.append({
+                'key': 'mlflow.source.type',
+                'value': source_type
+            })
+            # Add source without mlflow prefix (MLflow UI compatibility)
+            tags.append({
+                'key': 'source',
+                'value': source
+            })
+
+            # Token usage tags (for GenAI traces)
+            if attributes.get('input_tokens'):
+                tags.append({
+                    'key': 'mlflow.promptTokens',
+                    'value': str(attributes['input_tokens'])
+                })
+
+            if attributes.get('output_tokens'):
+                tags.append({
+                    'key': 'mlflow.completionTokens',
+                    'value': str(attributes['output_tokens'])
+                })
+
+            if attributes.get('total_tokens'):
+                tags.append({
+                    'key': 'mlflow.totalTokens',
+                    'value': str(attributes['total_tokens'])
+                })
+
+            # Add tokens tag in "prompt/completion" format (MLflow UI compatibility)
+            if attributes.get('input_tokens') and attributes.get('output_tokens'):
+                tags.append({
+                    'key': 'tokens',
+                    'value': f"{attributes['input_tokens']}/{attributes['output_tokens']}"
+                })
+
+            # Insert/update tags (using INSERT ... ON CONFLICT DO UPDATE to overwrite enriched values)
+            for tag in tags:
+                cursor.execute("""
+                    INSERT INTO trace_tags (key, value, request_id)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (key, request_id) DO UPDATE SET value = EXCLUDED.value
+                """, (tag['key'], tag['value'], trace_id))
+
+            # 2. Update trace_info with request/response previews
+            request_preview = attributes.get('prompt', '')[:1000] if attributes.get('prompt') else None
+            response_preview = attributes.get('completion', '')[:1000] if attributes.get('completion') else None
+
+            cursor.execute("""
+                UPDATE trace_info
+                SET request_preview = COALESCE(request_preview, %s),
+                    response_preview = COALESCE(response_preview, %s)
+                WHERE request_id = %s
+            """, (
+                request_preview,
+                response_preview,
+                trace_id
+            ))
+
+            # 3. Insert into trace_request_metadata
+            metadata_entries = [
+                (trace_id, 'enrichment_source', 'enrichment-service'),
+                (trace_id, 'model', attributes.get('model_name', 'unknown')),
+                (trace_id, 'operation', attributes.get('operation_name', 'unknown')),
+            ]
+
+            for entry in metadata_entries:
+                try:
+                    cursor.execute("""
+                        INSERT INTO trace_request_metadata (request_id, key, value)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (key, request_id) DO NOTHING
+                    """, entry)
+                except psycopg2.errors.UndefinedTable:
+                    # Table doesn't exist, skip
+                    pass
+
+            logger.info(f"Successfully enriched trace {trace_id} (source: {source})")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to enrich trace {trace_id}: {e}")
+            return False
+
+
+    def process_traces(conn):
+        """Main processing loop for enriching traces."""
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Find traces needing enrichment
+                trace_ids = find_traces_needing_enrichment(cursor)
+
+                if not trace_ids:
+                    return
+
+                # Process each trace
+                enriched_count = 0
+                for trace_id in trace_ids:
+                    # Extract attributes (gen_ai.* or http.* or generic)
+                    attributes = extract_trace_attributes(cursor, trace_id)
+
+                    if not attributes:
+                        continue
+
+                    # Enrich trace with retry logic
+                    success = False
+                    for attempt in range(MAX_RETRIES):
+                        try:
+                            if enrich_trace(cursor, trace_id, attributes):
+                                conn.commit()
+                                enriched_count += 1
+                                success = True
+                                break
+                        except Exception as e:
+                            logger.warning(f"Enrichment attempt {attempt + 1}/{MAX_RETRIES} failed for {trace_id}: {e}")
+                            conn.rollback()
+                            time.sleep(RETRY_DELAY)
+
+                    if not success:
+                        logger.error(f"Failed to enrich trace {trace_id} after {MAX_RETRIES} attempts")
+
+                if enriched_count > 0:
+                    logger.info(f"Enriched {enriched_count}/{len(trace_ids)} traces in this cycle")
+        except Exception as e:
+            logger.error(f"Error in process_traces: {e}", exc_info=True)
+            conn.rollback()
+
+
+    def main():
+        """Main service loop."""
+        logger.info("Starting MLflow Trace Enrichment Service")
+        logger.info(f"Configuration: poll_interval={POLL_INTERVAL}s, max_retries={MAX_RETRIES}, retry_delay={RETRY_DELAY}s")
+
+        # Validate database password is set
+        if not DB_CONFIG['password']:
+            logger.error("MLFLOW_DB_PASSWORD environment variable is not set")
+            sys.exit(1)
+
+        # Create database connection
+        try:
+            conn = get_db_connection()
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {e}")
+            sys.exit(1)
+
+        # Main loop
+        logger.info("Entering main processing loop")
+        try:
+            while True:
+                try:
+                    process_traces(conn)
+                except psycopg2.OperationalError as e:
+                    logger.error(f"Database connection error: {e}")
+                    logger.info("Reconnecting to database...")
+                    conn.close()
+                    conn = get_db_connection()
+                except Exception as e:
+                    logger.error(f"Unexpected error in processing loop: {e}", exc_info=True)
+
+                time.sleep(POLL_INTERVAL)
+
+        except KeyboardInterrupt:
+            logger.info("Shutting down gracefully...")
+        finally:
+            conn.close()
+            logger.info("Service stopped")
+
+
+    if __name__ == "__main__":
+        main()
