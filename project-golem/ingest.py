@@ -187,13 +187,13 @@ def build_knn_graph(positions_3d, k):
     # Build edge list
     edges = []
     for i, neighbors in enumerate(indices):
-        for neighbor_idx in neighbors[1:]:  # Skip self (index 0)
+        for j, neighbor_idx in enumerate(neighbors[1:], start=1):  # Skip self (index 0)
             # Add undirected edge (only once per pair)
             if i < neighbor_idx:
                 edges.append({
                     'source': int(i),
                     'target': int(neighbor_idx),
-                    'distance': float(distances[i][neighbor_idx])
+                    'distance': float(distances[i][j])
                 })
 
     print(f"✓ KNN graph built ({len(edges)} connections)")

@@ -51,6 +51,8 @@ spec:
         component: ingest
     spec:
       restartPolicy: OnFailure
+      nodeSelector:
+        kubernetes.io/hostname: worker-gpu2
       containers:
       - name: ingest
         image: quay.io/aicatalyst/project-golem:latest
