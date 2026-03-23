@@ -377,6 +377,67 @@ ssh root@<CLUSTER_IP> 'kubectl logs -n catalystlab-shared deployment/tempo-compa
 
 ## Troubleshooting
 
+### Issue: Too Many Unhealthy Instances in the Ring
+
+**Symptom**:
+- Grafana shows error: "too many unhealthy instances in the ring"
+- Tempo queries fail with 500 errors
+- Tempo distributor/querier logs: `instance X in the ring is UNHEALTHY`
+
+**Root Cause**: Ring replication factor vs replica count mismatch causes zero redundancy. When a single pod restarts:
+- With `replication_factor: 1` and `replicas: 1`: 100% of instances become unhealthy during restart
+- Ring cannot achieve quorum → queries fail
+
+**Solution - Single Node HA Configuration**:
+
+Use `tempo-single-node-ha.yaml` for 1-worker clusters:
+
+```bash
+# Deploy with single-node HA configuration
+scp tempo-single-node-ha.yaml root@<CLUSTER_IP>:/tmp/
+ssh root@<CLUSTER_IP> 'helm upgrade tempo grafana/tempo-distributed \
+  -n catalystlab-shared \
+  -f /tmp/tempo-single-node-ha.yaml'
+```
+
+Key differences from standard deployment:
+- **2 replicas** for distributor, ingester, querier, query-frontend, metrics-generator, gateway
+- **replication_factor: 2** (matches replica count)
+- **affinity: null** (allows multiple replicas on same node)
+- **MinIO S3 storage** (required for multi-replica shared storage)
+- **memcached disabled** (reduces complexity)
+
+Trade-offs:
+- ✅ Ring redundancy prevents query failures during pod restarts
+- ⚠️ Multiple replicas on same node = less resilient to node failure
+- ✅ Acceptable for lab environments prioritizing stability over HA
+
+**MinIO Storage Configuration**:
+
+```yaml
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: tempo-traces
+      endpoint: minio.catalystlab-shared.svc.cluster.local:9000
+      access_key: minio
+      secret_key: minio123
+      insecure: true
+```
+
+**Verification**:
+```bash
+# Check replica counts
+ssh root@<CLUSTER_IP> 'kubectl get deployment,statefulset -n catalystlab-shared -l app.kubernetes.io/instance=tempo'
+
+# Should see 2/2 replicas for ingester, distributor, etc.
+# Compactor should be 1/1 (background task only)
+
+# Verify ring health
+ssh root@<CLUSTER_IP> 'kubectl logs -n catalystlab-shared deployment/tempo-distributor | grep -i ring'
+```
+
 ### Issue: Istio Sidecar Interfering with Tempo
 
 **Symptom**:
@@ -792,6 +853,21 @@ spec:
 multitenancyEnabled: true
 # Requires tenant ID in trace headers
 ```
+
+## Current Deployment
+
+**Active Configuration**: `tempo-single-node-ha.yaml` (deployed March 23, 2026)
+
+**Reason**: Single-worker cluster requires special HA configuration to prevent ring failures. Standard configuration (`tempo-minimal-values.yaml`) with 1 replica + replication_factor 1 caused "too many unhealthy instances in the ring" errors during pod restarts.
+
+**Key Settings**:
+- Ingester replicas: 2, replication_factor: 2
+- Distributor replicas: 2, replication_factor: 2
+- Storage: MinIO S3 (tempo-traces bucket)
+- Anti-affinity: disabled (allows multiple pods per node)
+- Memcached: disabled
+
+**Stability**: Ring redundancy ensures queries succeed during pod restarts. Trade-off: Multiple replicas on same node reduces node-level HA.
 
 ## Deployment Status
 

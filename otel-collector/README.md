@@ -14,7 +14,11 @@ OTel Collector (catalystlab-shared)
     ├─ transform           → injects mlflow.spanType, sets peer.service for dependency graphs
     │
     ├──▶ MLflow  (otlp_http → :5000, experiment ID 1)
-    └──▶ Tempo   (otlp_grpc/tempo → :4317)
+    ├──▶ Tempo   (otlp_grpc/tempo → :4317)
+    ├──▶ spanmetrics connector   → duration histograms, call counters
+    └──▶ servicegraph connector  → service-to-service edge metrics
+         │
+         └──▶ Prometheus (:8889) → scraped by ServiceMonitor
 ```
 
 ## Deployment
@@ -39,6 +43,29 @@ OTTL statements that enrich spans:
 | `service.name = "vllm"` | Fixes vLLM's `unknown_service` to `vllm` for Tempo/Grafana service graphs |
 | `peer.service = "vllm"` | Enables Tempo/Kiali service dependency edges for llamastack → vllm calls |
 | `session.id` / `user.id` | Maps gen_ai attributes to MLflow session/user columns |
+
+## Connectors
+
+### `spanmetrics`
+Generates per-service, per-span-name metrics from traces. Replaces Tempo's built-in metrics_generator (removed from cluster).
+
+**Metrics produced**:
+- `traces_spanmetrics_duration_milliseconds_{bucket,sum,count}` - Latency histograms
+- `traces_spanmetrics_calls_total` - Request counters
+
+**Dimensions**: `service.name`, `span.name`, `span.kind`, `status.code`, `peer.service`
+
+### `servicegraph`
+Generates service-to-service edge metrics from traces using `peer.service` attributes set by the transform processor.
+
+**Metrics produced**:
+- `traces_service_graph_request_total` - Request count between services
+- `traces_service_graph_request_failed_total` - Failed requests
+- `traces_service_graph_request_server_seconds_{bucket,sum,count}` - Latency between services
+
+**Example**: llamastack → vllm edge appears in Grafana service graph dashboards.
+
+**Prometheus Export**: All connector metrics exposed at `:8889/metrics` and scraped by the ServiceMonitor.
 
 ## Known Limitations
 
