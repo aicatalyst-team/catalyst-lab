@@ -43,7 +43,9 @@ MLflow's OTLP trace ingestion endpoint (`/v1/traces`) accepts OpenTelemetry trac
 - Trace names descriptive (`chat vllm/RedHatAI...`)
 - Version extracted from model names
 
-**Why we abandoned this:** The complexity and maintenance burden of the middleware outweighed the benefit of having these fields populated in MLflow UI, especially since Tempo/Grafana provides full trace visibility with proper GenAI semantic conventions.
+**Why we abandoned this:** The complexity and maintenance burden of the middleware/enrichment service outweighed the benefit of having these fields populated in MLflow UI, especially since Tempo/Grafana provides full trace visibility with proper GenAI semantic conventions.
+
+**Performance note:** The enrichment service successfully populated all MLflow UI fields including request/response previews. Verified working as of March 16, 2026. It ran as a separate deployment polling PostgreSQL every 30 seconds, enriching ~30 traces per cycle with zero data loss.
 
 ## The Solution (This Deprecated Approach)
 
@@ -138,10 +140,55 @@ LlamaStack Pod
 - Current MLflow README: [mlflow/README.md](../mlflow/README.md)
 - Current LlamaStack deployment: [llamastack/README.md](../llamastack/README.md)
 
+## Current State (Auto-Instrumentation)
+
+**Verified:** March 24, 2026
+
+Database query results show auto-instrumentation captures metadata but **NOT** request/response content:
+
+```sql
+SELECT request_preview, response_preview FROM trace_info
+ORDER BY timestamp_ms DESC LIMIT 5;
+
+ request_preview | response_preview
+-----------------+------------------
+ NULL            | NULL
+ NULL            | NULL
+ NULL            | NULL
+ NULL            | NULL
+ NULL            | NULL
+```
+
+**What auto-instrumentation captures:**
+- ✅ Model name (`gen_ai.request.model`)
+- ✅ Token usage (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`)
+- ✅ Service dependencies (`peer.service` → vllm)
+- ✅ Span types (`mlflow.spanType` → CHAT_MODEL)
+- ✅ Timing/latency data
+- ✅ User/Session tags (if provided via OTel headers)
+- ❌ **Request/response content** (NULL in database)
+
+**What the enrichment service captured:**
+- ✅ All of the above
+- ✅ **Request preview** (actual prompt text)
+- ✅ **Response preview** (actual completion text)
+- ✅ Trace name extraction from model/operation
+- ✅ Version metadata
+
+**Trade-off:** Accepted loss of MLflow UI request/response preview columns in exchange for:
+- Standards compliance (no proprietary middleware)
+- Simplified architecture (no polling service)
+- Better trace hierarchy (auto-instrumentation captures full FastAPI stack)
+- Dual export to MLflow + Tempo without custom code
+
 ## Lessons Learned
 
-1. **OpenTelemetry auto-instrumentation is sufficient** for GenAI observability when paired with proper backend (Tempo/Grafana)
-2. **MLflow's OTLP support is limited** - designed for their proprietary SDK, not pure OTel workflows
-3. **Middleware complexity compounds maintenance burden** - prefer standard instrumentation libraries
-4. **Database polling for enrichment is fragile** - race conditions, timing dependencies, foreign key constraints
-5. **HTTP body capture violates OTel design** - semantic conventions deliberately exclude bodies for security/performance
+1. **OpenTelemetry auto-instrumentation is sufficient** for GenAI observability when paired with proper backend (Tempo/Grafana), but **not** for populating MLflow's proprietary UI fields
+2. **MLflow's OTLP support is limited** - designed for their proprietary SDK, not pure OTel workflows. Specifically:
+   - `opentelemetry-instrumentation-openai-v2` emits prompt/completion via EventLogger (logs), not span attributes
+   - MLflow's `/v1/logs` endpoint returns 404 (doesn't accept OTLP logs)
+   - No way to populate `request_preview`/`response_preview` via OTLP alone
+3. **The enrichment service DID work** - successfully populated all MLflow UI fields by polling PostgreSQL and backfilling from span JSONB content
+4. **Middleware complexity compounds maintenance burden** - prefer standard instrumentation libraries when possible
+5. **Database polling for enrichment is fragile** - race conditions, timing dependencies, foreign key constraints, but **it did function correctly** when tuned properly
+6. **HTTP body capture violates OTel design** - semantic conventions deliberately exclude bodies for security/performance, which is why auto-instrumentation doesn't capture request/response content
