@@ -10,20 +10,20 @@ Usage:
   uv run guidellm_to_mlflow.py <path-to-guidellm-report.json> [--experiment-name <name>]
 """
 
-import sys
-import json
 import argparse
-import os
 import glob
+import json
+import os
+import sys
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Upload GuideLLM JSON reports to MLflow")
     parser.add_argument("report_path", help="Path to GuideLLM JSON report (or directory containing reports)")
     parser.add_argument("--experiment-name", default="guidellm-benchmarks", help="MLflow experiment name")
     parser.add_argument("--run-name", help="Optional custom name for the MLflow run")
     return parser.parse_args()
 
-def check_mlflow_available():
+def check_mlflow_available() -> bool:
     try:
         import mlflow
         return True
@@ -32,7 +32,7 @@ def check_mlflow_available():
         print("Please install it: uv pip install mlflow")
         sys.exit(1)
 
-def process_report(filepath, experiment_name, run_name=None):
+def process_report(filepath: str, experiment_name: str, run_name: str | None = None) -> bool:
     import mlflow
 
     print(f"Processing {filepath}...")
@@ -128,7 +128,7 @@ def process_report(filepath, experiment_name, run_name=None):
 
     return True
 
-def main():
+def main() -> None:
     args = parse_args()
     check_mlflow_available()
 
