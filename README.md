@@ -209,9 +209,33 @@ Each component directory contains a `README.md` with deployment instructions, ca
 - [GuideLLM](./guidellm/README.md) -- benchmark execution and MLflow upload
 - [Scripts](./scripts/README.md) -- operational utilities
 
+## Development
+
+### Setup
+
+```bash
+git clone https://github.com/aicatalyst-team/catalyst-lab
+cd catalyst-lab
+make setup    # installs pre-commit hooks, ruff, pylint, markdownlint
+```
+
+### Linting
+
+```bash
+make lint             # run all linters
+make lint-python      # ruff + pylint only
+make lint-markdown    # markdownlint only
+```
+
+### Pre-commit Checks
+
+```bash
+make pre-commit       # run all pre-commit hooks against all files
+```
+
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Pre-commit hooks enforce security rules -- run `pre-commit install` before your first commit.
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Pre-commit hooks enforce security rules -- run `make setup` before your first commit.
 
 ## License
 
