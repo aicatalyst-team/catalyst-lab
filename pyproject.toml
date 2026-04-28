@@ -1,3 +1,30 @@
+[project]
+name = "catalyst-lab"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "flask",
+    "flask-cors",
+    "numpy",
+    "psycopg2-binary",
+    "pgvector",
+    "pyyaml",
+    "requests",
+    "scikit-learn",
+    "umap-learn",
+    "wikipedia-api",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit",
+    "pylint",
+    "ruff",
+]
+mlflow = [
+    "mlflow",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
