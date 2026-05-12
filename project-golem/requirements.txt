@@ -1,7 +1,7 @@
 # Project Golem - Python Dependencies
 
 # Web Framework
-Flask==3.0.0
+Flask==3.1.3
 flask-cors==4.0.0
 
 # Database
