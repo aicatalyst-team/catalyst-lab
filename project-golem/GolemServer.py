@@ -9,12 +9,13 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import psycopg2
 import requests
 import yaml
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 from flask_cors import CORS
 from pgvector.psycopg2 import register_vector
 
@@ -30,7 +31,7 @@ db_conn = None
 table_name = None
 
 
-def load_config():
+def load_config() -> dict[str, Any]:
     """Load configuration from config.yaml"""
     config_path = Path(__file__).parent / "config.yaml"
     if not config_path.exists():
@@ -42,7 +43,7 @@ def load_config():
         return yaml.safe_load(f)
 
 
-def load_cortex():
+def load_cortex() -> dict[str, Any]:
     """Load the cortex visualization data"""
     # Check /data first (for containerized deployments), then local directory
     data_path = Path("/data/golem_cortex.json")
@@ -61,7 +62,7 @@ def load_cortex():
         return json.load(f)
 
 
-def connect_to_database():
+def connect_to_database() -> psycopg2.extensions.connection:
     """Establish persistent database connection"""
     db_config = config['database']
     try:
@@ -81,7 +82,7 @@ def connect_to_database():
         sys.exit(1)
 
 
-def discover_table_name():
+def discover_table_name() -> str:
     """Discover LLaMA Stack vector store table name (pattern: vs_vs_<uuid>)"""
     cursor = db_conn.cursor()
 
@@ -104,7 +105,7 @@ def discover_table_name():
     return result[0]
 
 
-def get_embedding(text):
+def get_embedding(text: str) -> list[float]:
     """Get embedding from Qwen3-Embedding-8B"""
     embedding_config = config['embedding']
 
@@ -134,7 +135,7 @@ def get_embedding(text):
         raise
 
 
-def search_vectors(query_embedding, top_k=10):
+def search_vectors(query_embedding: list[float], top_k: int = 10) -> list[dict[str, Any]]:
     """Search pgvector for similar vectors"""
     cursor = db_conn.cursor()
 
@@ -171,19 +172,19 @@ def search_vectors(query_embedding, top_k=10):
 # Routes
 
 @app.route('/')
-def index():
+def index() -> str:
     """Serve the main visualization page"""
     return render_template('index.html')
 
 
 @app.route('/cortex')
-def get_cortex():
+def get_cortex() -> Response:
     """Return the cortex data for visualization"""
     return jsonify(cortex)
 
 
 @app.route('/query')
-def query():
+def query() -> tuple[Response, int] | Response:
     """
     Handle search queries
     Query params: ?q=<query text>&k=<top_k>
@@ -211,13 +212,13 @@ def query():
 
 
 @app.route('/stats')
-def stats():
+def stats() -> Response:
     """Return cortex statistics"""
     return jsonify(cortex.get('stats', {}))
 
 
 @app.route('/health')
-def health():
+def health() -> Response:
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
@@ -229,11 +230,11 @@ def health():
 
 # Static files
 @app.route('/static/<path:path>')
-def send_static(path):
+def send_static(path: str) -> Response:
     return send_from_directory('app/static', path)
 
 
-def main():
+def main() -> None:
     """Start the server"""
     global config, cortex, db_conn, table_name
 

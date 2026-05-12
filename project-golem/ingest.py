@@ -9,6 +9,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import psycopg2
@@ -18,7 +19,7 @@ from pgvector.psycopg2 import register_vector
 from sklearn.neighbors import NearestNeighbors
 
 
-def load_config():
+def load_config() -> dict[str, Any]:
     """Load configuration from config.yaml"""
     config_path = Path(__file__).parent / "config.yaml"
     if not config_path.exists():
@@ -30,7 +31,7 @@ def load_config():
         return yaml.safe_load(f)
 
 
-def connect_to_database(db_config):
+def connect_to_database(db_config: dict[str, Any]) -> psycopg2.extensions.connection:
     """Connect to pgvector database"""
     print("🔗 Connecting to pgvector...")
     try:
@@ -52,7 +53,7 @@ def connect_to_database(db_config):
         sys.exit(1)
 
 
-def fetch_vectors(conn):
+def fetch_vectors(conn: psycopg2.extensions.connection) -> list[dict[str, Any]]:
     """Fetch all vectors from the database"""
     print("📊 Fetching vectors from database...")
 
@@ -123,7 +124,7 @@ def fetch_vectors(conn):
     return vectors
 
 
-def apply_umap(vectors, umap_config):
+def apply_umap(vectors: list[dict[str, Any]], umap_config: dict[str, Any]) -> np.ndarray:
     """Apply UMAP dimensionality reduction to convert 4096d → 3d"""
     print(f"🧮 Applying UMAP ({len(vectors[0]['embedding'])}d → 3d)...")
 
@@ -161,7 +162,7 @@ def apply_umap(vectors, umap_config):
         sys.exit(1)
 
 
-def build_knn_graph(positions_3d, k):
+def build_knn_graph(positions_3d: np.ndarray, k: int) -> list[dict[str, Any]]:
     """Build k-nearest neighbors graph for connections"""
     print(f"🔗 Building KNN graph (k={k})...")
 
@@ -200,7 +201,7 @@ def build_knn_graph(positions_3d, k):
     return edges
 
 
-def assign_categories(vectors):
+def assign_categories(vectors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Assign categories based on metadata or clustering"""
     # Simple category assignment based on metadata
     # Customize this based on your data structure
@@ -226,7 +227,12 @@ def assign_categories(vectors):
     return vectors
 
 
-def save_cortex(vectors, positions_3d, edges, output_path):
+def save_cortex(
+    vectors: list[dict[str, Any]],
+    positions_3d: np.ndarray,
+    edges: list[dict[str, Any]],
+    output_path: Path,
+) -> dict[str, Any]:
     """Save visualization data to JSON"""
     print("💾 Saving to golem_cortex.json...")
 
@@ -268,7 +274,7 @@ def save_cortex(vectors, positions_3d, edges, output_path):
     return cortex
 
 
-def main():
+def main() -> None:
     """Main ingest pipeline"""
     print("🧠 Project Golem - Cortex Builder")
     print("=" * 50)

@@ -8,11 +8,13 @@ import json
 import os
 import sys
 import time
-import yaml
+from pathlib import Path
+from typing import Any
+
 import psycopg2
 import requests
 import wikipediaapi
-from pathlib import Path
+import yaml
 from pgvector.psycopg2 import register_vector
 
 
@@ -135,7 +137,7 @@ ARTICLE_CATEGORIES = {
 }
 
 
-def load_config():
+def load_config() -> dict[str, Any]:
     """Load configuration from config.yaml"""
     config_path = Path(__file__).parent / "config.yaml"
     if not config_path.exists():
@@ -146,7 +148,7 @@ def load_config():
         return yaml.safe_load(f)
 
 
-def connect_to_database(db_config):
+def connect_to_database(db_config: dict[str, Any]) -> psycopg2.extensions.connection:
     """Connect to pgvector database"""
     password = os.environ.get('DB_PASSWORD', db_config.get('password', ''))
 
@@ -161,7 +163,7 @@ def connect_to_database(db_config):
     return conn
 
 
-def discover_table_name(conn):
+def discover_table_name(conn: psycopg2.extensions.connection) -> str:
     """Discover LLaMA Stack vector store table name"""
     cursor = conn.cursor()
     cursor.execute("""
@@ -181,7 +183,7 @@ def discover_table_name(conn):
     return result[0]
 
 
-def get_embedding(text, embedding_config):
+def get_embedding(text: str, embedding_config: dict[str, Any]) -> list[float] | None:
     """Get embedding from Qwen3-Embedding-8B"""
     try:
         response = requests.post(
@@ -200,7 +202,14 @@ def get_embedding(text, embedding_config):
         return None
 
 
-def insert_to_pgvector(conn, table_name, article_id, content, category, embedding):
+def insert_to_pgvector(
+    conn: psycopg2.extensions.connection,
+    table_name: str,
+    article_id: str,
+    content: str,
+    category: str,
+    embedding: list[float],
+) -> bool:
     """Insert article into pgvector table"""
     cursor = conn.cursor()
 
@@ -237,7 +246,7 @@ def insert_to_pgvector(conn, table_name, article_id, content, category, embeddin
         return False
 
 
-def main():
+def main() -> None:
     print("🧠 Project Golem - Wikipedia Loader")
     print("=" * 70)
 
