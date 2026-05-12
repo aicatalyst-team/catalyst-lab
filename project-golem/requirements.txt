@@ -10,7 +10,7 @@ pgvector==0.2.4
 
 # Machine Learning & Dimensionality Reduction
 numpy==1.26.3
-umap-learn==0.5.5
+umap-learn==0.5.12
 scikit-learn==1.4.0
 
 # HTTP Requests
