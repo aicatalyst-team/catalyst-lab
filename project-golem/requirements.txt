@@ -6,7 +6,7 @@ flask-cors==4.0.0
 
 # Database
 psycopg2-binary==2.9.9
-pgvector==0.2.4
+pgvector==0.4.2
 
 # Machine Learning & Dimensionality Reduction
 numpy==1.26.3
