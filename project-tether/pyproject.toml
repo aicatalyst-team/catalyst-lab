@@ -46,11 +46,16 @@ ignore-patterns = [".*_pb2.py", ".*_pb2_grpc.py"]
 [tool.pylint."messages control"]
 disable = [
     "C0103",  # gRPC methods must be PascalCase
+    "C0115",  # compact test helper classes do not need standalone docstrings
     "C0302",  # server.py is one module by design
+    "C0116",  # protocol handlers and HTTP endpoints are self-describing
+    "C0413",  # demo scripts add their source tree before importing it
     "C0415",  # conditional imports for optional deps (otel)
     "C1803",  # explicit == [] is clearer in tests
     "E0401",  # cross-project imports resolved at runtime
+    "E0611",  # runtime-generated/protocol symbols are not statically visible
     "R0801",  # test files share setup patterns
+    "R0902",  # protocol/test records intentionally expose several fields
     "R0903",  # pytest test classes often have 1 method
     "R0913",  # test helpers need many args
     "R0914",  # handler functions have many locals
@@ -61,4 +66,6 @@ disable = [
     "W0621",  # pytest fixtures redefine outer names by design
     "W0622",  # format param in logging setup
     "W0718",  # broad except needed for resilient I/O
+    "W0212",  # tests intentionally inspect controlled internal state
+    "W1510",  # subprocess return codes are intentionally handled explicitly
 ]
