@@ -1,0 +1,106 @@
+# Tether Verification Gateway
+# Multi-stage build: download F*/Z3, generate gRPC stubs, assemble runtime.
+# Image: quay.io/aicatalyst/tether-gateway:latest
+#
+# Build:  podman build --platform linux/amd64 -t quay.io/aicatalyst/tether-gateway:latest -f Containerfile .
+# Run:    podman run -p 50051:50051 -p 8080:8080 quay.io/aicatalyst/tether-gateway:latest
+
+# ──────────────────────────────────────────────────────────────────────
+# Stage 0: downloader — fetch F* and Z3 Linux binaries
+# ──────────────────────────────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS downloader
+
+ARG FSTAR_VERSION=2026.07.12
+ARG Z3_VERSION=4.12.6
+
+USER 0
+WORKDIR /downloads
+
+RUN microdnf install -y tar gzip unzip findutils && microdnf clean all
+
+RUN curl -fsSL "https://github.com/FStarLang/FStar/releases/download/v${FSTAR_VERSION}/fstar-v${FSTAR_VERSION}-Linux-x86_64.tar.gz" \
+      | tar xz \
+    && mv fstar /opt/fstar
+
+RUN curl -fsSL -o /tmp/z3.zip \
+      "https://github.com/Z3Prover/z3/releases/download/z3-${Z3_VERSION}/z3-${Z3_VERSION}-x64-glibc-2.31.zip" \
+    && unzip -q /tmp/z3.zip -d /tmp \
+    && cp /tmp/z3-${Z3_VERSION}-x64-glibc-2.31/bin/z3 /usr/local/bin/z3 \
+    && chmod +x /usr/local/bin/z3 \
+    && rm -rf /tmp/z3*
+
+# ──────────────────────────────────────────────────────────────────────
+# Stage 1: builder — install tools and generate gRPC Python stubs
+# ──────────────────────────────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi9/python-312:latest AS builder
+
+USER 0
+WORKDIR /build
+
+# Copy only what grpc_tools needs so this layer is cached aggressively
+COPY proto/ proto/
+RUN pip install --no-cache-dir "grpcio-tools>=1.60" \
+    && python -m grpc_tools.protoc \
+        -Iproto \
+        --python_out=proto \
+        --grpc_python_out=proto \
+        proto/tether.proto \
+    && sed -i 's/^import tether_pb2 as tether__pb2$/from . import tether_pb2 as tether__pb2/' proto/tether_pb2_grpc.py
+
+# ──────────────────────────────────────────────────────────────────────
+# Stage 2: runtime
+# ──────────────────────────────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+USER 0
+
+LABEL maintainer="AI Catalyst Lab" \
+      description="Tether Verification Gateway — formally verified AI agent runtime" \
+      io.openshift.tags="tether,grpc,verification"
+
+WORKDIR /opt/tether
+
+# Install runtime dependencies
+RUN pip install --no-cache-dir \
+    "grpcio>=1.60" \
+    "grpcio-health-checking>=1.60" \
+    "pyyaml>=6.0" \
+    "psycopg2-binary>=2.9" \
+    "mlflow>=2.10" \
+    "httpx>=0.27" \
+    "opentelemetry-sdk>=1.20" \
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20"
+
+# Copy the server source
+COPY src/tether/ src/tether/
+
+# Copy verification logic from test modules into the runtime package.
+# In the repo these live under tests/tether/ but at runtime they are
+# part of the tether package so the server can import them directly.
+COPY tests/tether/gateway_client.py src/tether/gateway_client.py
+COPY tests/tether/owasp_asi06_vectors.py src/tether/owasp_asi06_vectors.py
+
+# Copy generated gRPC stubs from builder stage
+COPY --from=builder /build/proto/tether_pb2.py src/tether/tether_pb2.py
+COPY --from=builder /build/proto/tether_pb2_grpc.py src/tether/tether_pb2_grpc.py
+
+# Copy F* specs for reference and native verification
+COPY specs/ specs/
+
+# Copy F* and Z3 binaries from downloader stage
+COPY --from=downloader /opt/fstar /opt/fstar
+COPY --from=downloader /usr/local/bin/z3 /usr/local/bin/z3
+
+ENV FSTAR_HOME=/opt/fstar \
+    Z3_PATH=/usr/local/bin/z3 \
+    TETHER_LOG_LEVEL=info \
+    PYTHONPATH=/opt/tether/src
+
+# gRPC, health-check, and inference proxy ports
+EXPOSE 50051 8080 8082
+
+# OpenShift runs containers as an arbitrary non-root UID in the
+# root group (GID 0).  The UBI image already sets up user 1001.
+USER 1001
+
+CMD ["python", "-m", "tether.server"]

@@ -1,0 +1,43 @@
+# SCC bindings for OpenShell in tether-verified namespace.
+#
+# tether-openshell gateway needs anyuid SCC to run as root (UID 0)
+# for SQLite database management and JWT key operations.
+#
+# tether-openshell-sandbox needs openshell-kata SCC for Landlock/seccomp
+# enforcement capabilities (SYS_ADMIN, NET_ADMIN, SYS_PTRACE, SYSLOG).
+#
+# Usage:
+#   oc apply -f openshell/scc-binding.yaml
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tether-verified-openshell-gateway-anyuid
+  labels:
+    app.kubernetes.io/part-of: project-tether
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: tether-openshell
+    namespace: tether-verified
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tether-verified-openshell-kata-scc
+  labels:
+    app.kubernetes.io/part-of: project-tether
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:openshell-kata
+subjects:
+  - kind: ServiceAccount
+    name: tether-openshell
+    namespace: tether-verified
+  - kind: ServiceAccount
+    name: tether-openshell-sandbox
+    namespace: tether-verified

@@ -1,0 +1,120 @@
+# Tether verification sidecar for Hermes Agent on OpenShift AI
+#
+# Patches a Hermes agent Deployment to add:
+#   1. Tether sidecar — intercepts memory writes before persistence
+#   2. OpenShell sandbox init — applies runtime policy
+#
+# Usage:
+#   kubectl patch deployment hermes-agent \
+#     --namespace tether-verified \
+#     --patch-file hermes-sidecar-patch.yaml
+#
+# The Hermes agent persists to two tiers:
+#   Tier 1: MEMORY.md (~2200 chars) — verified by P7 bounds
+#   Tier 2: SQLite FTS5 (skills, USER.md) — verified by P9/P10 tool scope
+#
+# Tether intercepts the write path via gRPC (port 50052) and runs
+# the five verification surfaces before allowing persistence:
+#   Surface 1: Inference soundness (P1/P2)
+#   Surface 2: Skill code verification (Dafny-as-IL pattern)
+#   Surface 3: Tool invocation trust (P9/P10)
+#   Surface 4: Temporal validity of stored proofs
+#   Surface 5: Multi-agent proof witness transport
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-agent
+  namespace: tether-verified
+spec:
+  template:
+    metadata:
+      labels:
+        app: hermes-agent
+        tether.ai/verified: "true"
+    spec:
+      initContainers:
+        # OpenShell sandbox initialization — applies Landlock + seccomp
+        - name: openshell-init
+          image: quay.io/aicatalyst/openshell-init:latest
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: SANDBOX_POLICY
+              value: /opt/tether/config/openshell-policy.yaml
+          volumeMounts:
+            - name: tether-config
+              mountPath: /opt/tether/config
+              readOnly: true
+
+      containers:
+        # Hermes agent container — references the deployment from
+        # https://developers.redhat.com/articles/2026/06/02/deploy-hermes-agent-openshift-ai-vllm-model-serving
+        - name: hermes-agent
+          env:
+            # Route memory writes through Tether sidecar
+            - name: HERMES_MEMORY_ENDPOINT
+              value: "localhost:50052"
+            - name: HERMES_VERIFY_WRITES
+              value: "true"
+
+        # Tether verification sidecar
+        - name: tether-sidecar
+          image: quay.io/aicatalyst/tether-sidecar:latest
+          ports:
+            - name: intercept
+              containerPort: 50052
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: TETHER_GATEWAY_URL
+              value: tether-gateway.tether-verified.svc.cluster.local:50051
+            - name: TETHER_MODE
+              value: intercept  # intercept | audit | passthrough
+            # Hermes memory tier bounds
+            - name: TETHER_TIER1_BOUND
+              value: "2200"
+            # Verification surfaces to enable
+            - name: TETHER_SURFACES
+              value: "inference,skill,tool,temporal,witness"
+            # OTel integration
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.tether-verified.svc.cluster.local:4317
+            - name: OTEL_SERVICE_NAME
+              value: tether-sidecar
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tether-config
+              mountPath: /opt/tether/config
+              readOnly: true
+
+      volumes:
+        - name: tether-config
+          configMap:
+            name: tether-config

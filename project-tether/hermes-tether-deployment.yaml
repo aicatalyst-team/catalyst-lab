@@ -1,0 +1,453 @@
+# Hermes Agent + Tether Verification Sidecar
+# Deployed in tether-verified namespace for end-to-end demo.
+# Uses shared Gemma 4 31B via vLLM as LLM backend.
+#
+# Prerequisites:
+#   - CNPG cluster 'tether-pg-cluster' running (postgresql-cluster.yaml)
+#   - MLflow deployed (mlflow-deployment.yaml)
+#   - Plugin ConfigMap applied (hermes-plugin-configmap.yaml)
+#   - tether-verified enrolled in ServiceMeshMemberRoll (for mTLS)
+#
+# Usage:
+#   oc apply -f hermes-tether-deployment.yaml -n tether-verified
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-config
+  namespace: tether-verified
+  labels:
+    app: hermes-agent
+    component: config
+data:
+  API_SERVER_ENABLED: "true"
+  API_SERVER_HOST: "0.0.0.0"
+  API_SERVER_KEY: "internal-openshift-health-check"
+  API_SERVER_PORT: "8080"
+  GATEWAY_ALLOW_ALL_USERS: "true"
+  HERMES_HOME: "/opt/data"
+  LLM_MODEL: "gemma4-31b"
+  OPENAI_BASE_URL: "http://localhost:8082/v1"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermes-data
+  namespace: tether-verified
+  labels:
+    app: hermes-agent
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-agent
+  namespace: tether-verified
+  labels:
+    app: hermes-agent
+    component: agent
+    tether.ai/verified: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hermes-agent
+      component: agent
+  template:
+    metadata:
+      labels:
+        app: hermes-agent
+        component: agent
+        tether.ai/verified: "true"
+        maistra.io/expose-route: "true"
+      annotations:
+        sidecar.istio.io/inject: "true"
+        traffic.sidecar.istio.io/excludeInboundPorts: "8080"
+        traffic.sidecar.istio.io/excludeOutboundPorts: "5432,5000"
+    spec:
+      imagePullSecrets:
+        - name: quay-pull-secret
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: setup-hermes-config
+          image: registry.access.redhat.com/ubi9/ubi-micro:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cat > /opt/data/config.yaml <<'CONF'
+              memory:
+                provider: tether
+              CONF
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        # Hermes agent — API gateway mode (no Telegram)
+        - name: hermes
+          image: quay.io/aicatalyst/hermes-agent:latest
+          imagePullPolicy: Always
+          command:
+            - /opt/hermes/venv/bin/python
+            - -m
+            - hermes_cli.main
+          args:
+            - gateway
+          env:
+            - name: HOME
+              value: /opt/data
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: HERMES_MEMORY_ENDPOINT
+              value: "localhost:50052"
+            - name: HERMES_VERIFY_WRITES
+              value: "true"
+            - name: TETHER_SIDECAR_URL
+              value: "http://localhost:8081/verify"
+            - name: SSL_CERT_FILE
+              value: /etc/pki/tls/custom/tls-ca-bundle.pem
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/tls/custom/tls-ca-bundle.pem
+          envFrom:
+            - configMapRef:
+                name: hermes-config
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+            - name: tether-plugin
+              mountPath: /opt/data/plugins/tether
+              readOnly: true
+            - name: trusted-ca
+              mountPath: /etc/pki/tls/custom
+              readOnly: true
+
+        # Tether verification sidecar
+        - name: tether-sidecar
+          image: quay.io/aicatalyst/tether-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - name: intercept
+              containerPort: 50052
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: HOME
+              value: /tmp
+            - name: TETHER_GRPC_PORT
+              value: "50052"
+            - name: TETHER_HEALTH_PORT
+              value: "8081"
+            - name: TETHER_GATEWAY_URL
+              value: tether-gateway.tether-verified.svc.cluster.local:50051
+            - name: TETHER_MODE
+              value: intercept
+            - name: TETHER_TIER1_BOUND
+              value: "2200"
+            - name: TETHER_SURFACES
+              value: "inference,skill,tool,temporal,witness"
+            - name: TETHER_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: host
+            - name: TETHER_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: port
+            - name: TETHER_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: dbname
+            - name: TETHER_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: user
+            - name: TETHER_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: password
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.tether-verified.svc.cluster.local:5000
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.catalystlab-shared.svc.cluster.local:4317
+            - name: OTEL_SERVICE_NAME
+              value: tether-sidecar
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tether-config
+              mountPath: /opt/tether/config
+              readOnly: true
+            - name: tether-work
+              mountPath: /tmp/tether-work
+            - name: tmp
+              mountPath: /tmp
+
+        # Tether inference proxy — captures LLM I/O at the RHOAI KServe
+        # boundary for automatic rule classification and verification.
+        # Agents call localhost:8082/v1 instead of KServe directly.
+        - name: tether-inference-proxy
+          image: quay.io/aicatalyst/tether-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - name: proxy
+              containerPort: 8082
+              protocol: TCP
+          env:
+            - name: HOME
+              value: /tmp
+            - name: TETHER_MODE
+              value: inference-proxy
+            - name: TETHER_PROXY_PORT
+              value: "8082"
+            - name: TETHER_LLM_UPSTREAM
+              value: "http://gemma4-svc.vllm.svc.cluster.local:8000/v1"
+            - name: TETHER_ENFORCE
+              value: "true"
+            - name: TETHER_SOURCE_TRUSTED
+              value: "true"
+            - name: TETHER_LOG_LEVEL
+              value: info
+            - name: SSL_CERT_FILE
+              value: /etc/pki/tls/custom/tls-ca-bundle.pem
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/tls/custom/tls-ca-bundle.pem
+            - name: TETHER_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: host
+            - name: TETHER_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: port
+            - name: TETHER_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: dbname
+            - name: TETHER_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: user
+            - name: TETHER_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: password
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.tether-verified.svc.cluster.local:5000
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.catalystlab-shared.svc.cluster.local:4317
+            - name: OTEL_SERVICE_NAME
+              value: tether-inference-proxy
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8082
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: trusted-ca
+              mountPath: /etc/pki/tls/custom
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: hermes-data
+        - name: tether-config
+          configMap:
+            name: tether-config
+        - name: tether-plugin
+          configMap:
+            name: tether-hermes-plugin
+        - name: tether-work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: trusted-ca
+          configMap:
+            name: odh-trusted-ca-bundle
+            optional: true
+            items:
+              - key: ca-bundle.crt
+                path: tls-ca-bundle.pem
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-agent
+  namespace: tether-verified
+  labels:
+    app: hermes-agent
+    component: agent
+spec:
+  type: ClusterIP
+  selector:
+    app: hermes-agent
+    component: agent
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: intercept
+      port: 50052
+      targetPort: intercept
+      protocol: TCP
+    - name: proxy
+      port: 8082
+      targetPort: proxy
+      protocol: TCP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: tether-proxy
+  namespace: tether-verified
+  labels:
+    app: hermes-agent
+    component: inference-proxy
+spec:
+  to:
+    kind: Service
+    name: hermes-agent
+    weight: 100
+  port:
+    targetPort: proxy
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: hermes-agent
+  namespace: tether-verified
+  labels:
+    app: hermes-agent
+spec:
+  to:
+    kind: Service
+    name: hermes-agent
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: tether-gateway
+  namespace: tether-verified
+  labels:
+    app: tether-gateway
+spec:
+  to:
+    kind: Service
+    name: tether-gateway
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

@@ -1,0 +1,297 @@
+syntax = "proto3";
+
+package tether.v1;
+
+option go_package = "github.com/aicatalyst/tether/proto/v1";
+
+// Tether Verification Gateway
+//
+// gRPC interface for the five verification surfaces:
+//   Surface 1: Model inference soundness (P1/P2)
+//   Surface 2: Skill/code generation verification
+//   Surface 3: Tool invocation trust (P9/P10)
+//   Surface 4: Temporal validity of stored proofs
+//   Surface 5: Multi-agent proof witness transport
+//
+// The composed VerifyWrite pipeline runs all applicable
+// surfaces before allowing a memory write to persist.
+
+service TetherGateway {
+  // Composed pipeline — runs P1 through P10 on a memory write
+  rpc VerifyWrite (VerifyWriteRequest) returns (VerifyWriteResponse);
+
+  // Surface 1: Validate inference chain soundness
+  rpc VerifyInference (VerifyInferenceRequest) returns (VerifyInferenceResponse);
+
+  // Surface 2: Validate generated skill before persistence
+  rpc VerifySkill (VerifySkillRequest) returns (VerifySkillResponse);
+
+  // Surface 3: Validate tool invocation trust
+  rpc VerifyToolInvocation (VerifyToolInvocationRequest) returns (VerifyToolInvocationResponse);
+
+  // Surface 4: Re-verify temporal validity of a stored proof
+  rpc VerifyTemporal (VerifyTemporalRequest) returns (VerifyTemporalResponse);
+
+  // Surface 5: Verify cross-agent proof witness
+  rpc VerifyWitness (VerifyWitnessRequest) returns (VerifyWitnessResponse);
+
+  // Health check
+  rpc Health (HealthRequest) returns (HealthResponse);
+}
+
+// ─── Shared Types ───
+
+enum TrustLevel {
+  TRUST_LEVEL_UNSPECIFIED = 0;
+  DIRECT_OBSERVATION = 1;
+  TOOL_OUTPUT = 2;
+  EXTERNAL_INPUT = 3;
+  AGENT_GENERATED = 4;
+  UNVERIFIED = 5;
+}
+
+message Observation {
+  string source = 1;
+  string content = 2;
+  TrustLevel trust = 3;
+  optional string tool_call_id = 4;
+}
+
+// Inference rule evidence — oneof mirrors the F* algebraic type
+message InferenceRule {
+  oneof rule {
+    IdentityRule identity = 1;
+    ExtractionRule extraction = 2;
+    AggregationRule aggregation = 3;
+    ToolResultRule tool_result = 4;
+    DerivationRule derivation = 5;
+  }
+}
+
+message IdentityRule {}
+
+message ExtractionRule {
+  string source_premise = 1;
+}
+
+message AggregationRule {
+  repeated string source_premises = 1;
+}
+
+message ToolResultRule {
+  string tool_name = 1;
+  string call_id = 2;
+  bool tool_trusted = 3;
+}
+
+message DerivationRule {
+  string domain_rule_id = 1;
+}
+
+message InferenceStep {
+  repeated string premises = 1;
+  InferenceRule rule = 2;
+  string conclusion = 3;
+}
+
+message InferenceChain {
+  repeated InferenceStep steps = 1;
+  string final_conclusion = 2;
+}
+
+message ProofCertificate {
+  string trace_id = 1;
+  string content_hash = 2;
+  InferenceRule rule_used = 3;
+  repeated string properties_satisfied = 4;
+  uint64 timestamp = 5;
+  uint32 observation_count = 6;
+}
+
+message PoisonPatterns {
+  repeated string instruction_overrides = 1;
+  repeated string role_escalations = 2;
+  repeated string exfiltration_markers = 3;
+}
+
+// ─── Surface 1: Inference Verification ───
+
+message VerifyInferenceRequest {
+  InferenceChain chain = 1;
+  repeated Observation observations = 2;
+  string trace_id = 3;
+}
+
+message VerifyInferenceResponse {
+  bool valid = 1;
+  repeated string properties_satisfied = 2;  // e.g. ["P1", "P2"]
+  repeated string violations = 3;
+}
+
+// ─── Surface 2: Skill Verification ───
+
+message SkillSpec {
+  string name = 1;
+  repeated string inputs = 2;
+  string output_type = 3;
+  uint32 max_body_size = 4;
+  repeated string allowed_tools = 5;
+}
+
+message SkillCode {
+  string name = 1;
+  string body = 2;
+  repeated string declared_inputs = 3;
+  string declared_output = 4;
+  repeated string tool_calls = 5;
+}
+
+message VerifySkillRequest {
+  SkillSpec spec = 1;
+  SkillCode code = 2;
+  PoisonPatterns poison_patterns = 3;
+  string trace_id = 4;
+}
+
+message VerifySkillResponse {
+  bool safe_to_persist = 1;
+  bool interface_valid = 2;
+  bool tools_within_scope = 3;
+  bool content_safe = 4;
+  repeated string violations = 5;
+}
+
+// ─── Surface 3: Tool Invocation Verification ───
+
+message ToolDeclaration {
+  string name = 1;
+  repeated string allowed_args = 2;
+  string output_type = 3;
+  repeated string declared_side_effects = 4;
+}
+
+message ToolCall {
+  string tool_name = 1;
+  repeated string arguments = 2;
+}
+
+message ToolResult {
+  string output = 1;
+  repeated string observed_side_effects = 2;
+}
+
+message VerifyToolInvocationRequest {
+  ToolDeclaration declaration = 1;
+  ToolCall call = 2;
+  ToolResult result = 3;
+  string trace_id = 4;
+}
+
+message VerifyToolInvocationResponse {
+  bool safe = 1;
+  bool call_within_scope = 2;     // P9
+  bool side_effects_contained = 3; // P10
+  repeated string violations = 4;
+}
+
+// ─── Surface 4: Temporal Validity ───
+
+message VerifyTemporalRequest {
+  ProofCertificate certificate = 1;
+  string stored_content_hash = 2;
+  uint64 current_time = 3;
+  uint64 valid_from = 4;
+  uint64 valid_until = 5;
+  string trace_id = 6;
+}
+
+message VerifyTemporalResponse {
+  bool valid = 1;
+  bool within_time_window = 2;
+  bool content_matches = 3;
+  repeated string violations = 4;
+}
+
+// ─── Surface 5: Proof Witness Transport ───
+
+message ProofWitness {
+  string source_agent = 1;
+  string content_hash = 2;
+  InferenceRule rule_used = 3;
+  repeated string properties = 4;
+  uint32 observation_count = 5;
+  bool source_trusted = 6;
+}
+
+message VerifyWitnessRequest {
+  ProofWitness witness = 1;
+  string stored_content_hash = 2;
+  repeated string required_properties = 3;
+  string trace_id = 4;
+}
+
+message VerifyWitnessResponse {
+  bool valid = 1;
+  bool well_formed = 2;
+  bool content_matches = 3;
+  bool has_required_properties = 4;
+  repeated string violations = 5;
+}
+
+// ─── Composed Write Pipeline ───
+
+message MemoryEntry {
+  string key = 1;
+  string content = 2;
+  bool source_trusted = 3;
+  string trace_id = 4;
+  optional ProofCertificate proof_cert = 5;
+}
+
+message DomainSpec {
+  repeated string critical_patterns = 1;
+  repeated string required_keys = 2;
+}
+
+message VerifyWriteRequest {
+  // The content to verify and persist
+  MemoryEntry entry = 1;
+  InferenceChain chain = 2;
+  repeated Observation observations = 3;
+
+  // Domain configuration
+  DomainSpec domain_spec = 4;
+  PoisonPatterns poison_patterns = 5;
+
+  // Memory state for completeness checking
+  repeated MemoryEntry existing_memory = 6;
+
+  // Tier bounds (Hermes: MEMORY.md ~2200 chars)
+  uint32 tier1_bound = 7;
+
+  string trace_id = 8;
+}
+
+message VerifyWriteResponse {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    WRITE_OK = 1;
+    WRITE_REJECTED = 2;
+  }
+
+  Status status = 1;
+  ProofCertificate certificate = 2;  // populated on WRITE_OK
+  repeated string properties_satisfied = 3;
+  repeated string violations = 4;
+}
+
+// ─── Health ───
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string fstar_version = 2;
+  string z3_version = 3;
+  uint32 specs_loaded = 4;
+}

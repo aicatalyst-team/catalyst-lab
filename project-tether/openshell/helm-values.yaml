@@ -1,0 +1,54 @@
+# OpenShell Helm values for tether-verified namespace
+# Deploys OpenShell gateway v0.0.92 to manage Tether+Hermes sandboxes
+#
+# Usage:
+#   helm install openshell oci://ghcr.io/nvidia/openshell/helm-chart \
+#     --version 0.0.92 \
+#     --namespace tether-verified \
+#     -f openshell/helm-values.yaml
+
+# Override fullname to avoid ClusterRole collision with openshell-poc install
+fullnameOverride: "tether-openshell"
+
+replicaCount: 1
+
+networkPolicy:
+  enabled: false
+
+# PKI init job creates JWT signing keys for sandbox authentication
+pkiInitJob:
+  enabled: true
+
+podSecurityContext:
+  fsGroup: 0
+
+securityContext:
+  capabilities:
+    drop: []
+  runAsNonRoot: false
+  runAsUser: 0
+
+supervisor:
+  sideloadMethod: "init-container"
+  topology: "combined"
+
+server:
+  logLevel: info
+  # Sandboxes created in same namespace as the gateway
+  sandboxNamespace: ""
+  # Custom sandbox image with Hermes + Tether baked in
+  sandboxImage: quay.io/aicatalyst/tether-sandbox:latest
+  sandboxImagePullPolicy: Always
+  sandboxImagePullSecrets:
+    - name: quay-pull-secret
+  # Kata runtime for kernel-level isolation (Layer 1)
+  defaultRuntimeClassName: "kata"
+  disableTls: true
+  enableLoopbackServiceHttp: true
+  # AppArmor must be Unconfined for Landlock enforcement inside sandbox
+  appArmorProfile: "Unconfined"
+  auth:
+    allowUnauthenticatedUsers: true
+
+service:
+  type: ClusterIP

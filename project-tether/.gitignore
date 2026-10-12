@@ -1,0 +1,30 @@
+# F* build artifacts
+*.checked
+*.krml
+_build/
+.fstar-cache/
+
+# Z3
+*.smt2
+
+# KaRaMeL extraction output
+out/
+
+# Config with real values
+config/tether-config.yaml
+
+# Generated proto stubs
+proto/*_pb2.py
+proto/*_pb2_grpc.py
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Journal
+journal/
+
+# OS
+.DS_Store

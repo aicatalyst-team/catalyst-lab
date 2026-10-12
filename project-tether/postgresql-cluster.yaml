@@ -1,0 +1,50 @@
+# CNPG PostgreSQL cluster for Tether proof certificate storage.
+# Requires the CloudNativePG operator (CRDs already installed on cluster).
+#
+# Usage:
+#   oc apply -f postgresql-cluster.yaml -n tether-verified
+#
+# After the cluster is ready, CNPG auto-creates a Secret named
+# 'tether-pg-cluster-app' with keys: host, port, dbname, user, password, uri.
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: tether-pg-cluster
+  namespace: tether-verified
+  labels:
+    app: tether
+    component: database
+spec:
+  instances: 1
+
+  bootstrap:
+    initdb:
+      database: tetherdb
+      owner: tether
+      postInitSQL:
+        - |
+          CREATE TABLE IF NOT EXISTS proof_certificates (
+            id            SERIAL PRIMARY KEY,
+            trace_id      TEXT NOT NULL,
+            content_hash  TEXT NOT NULL,
+            rule_used     TEXT NOT NULL,
+            properties    TEXT[] NOT NULL,
+            obs_count     INTEGER NOT NULL,
+            status        TEXT NOT NULL,
+            violations    TEXT[],
+            created_at    TIMESTAMPTZ DEFAULT now()
+          );
+        - CREATE INDEX IF NOT EXISTS idx_cert_trace ON proof_certificates(trace_id);
+        - CREATE INDEX IF NOT EXISTS idx_cert_created ON proof_certificates(created_at);
+
+  storage:
+    size: 2Gi
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"

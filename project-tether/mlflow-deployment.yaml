@@ -1,0 +1,136 @@
+# MLflow Tracking Server for Tether proof audit trail.
+# Uses the CNPG PostgreSQL cluster as backend store.
+#
+# Usage:
+#   oc apply -f mlflow-deployment.yaml -n tether-verified
+#
+# Prerequisites:
+#   - CNPG cluster 'tether-pg-cluster' running (postgresql-cluster.yaml)
+#   - CNPG auto-creates Secret 'tether-pg-cluster-app' with connection details
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: tether-verified
+  labels:
+    app: mlflow
+    component: audit-trail
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+        component: audit-trail
+        maistra.io/expose-route: "true"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mlflow
+          image: ghcr.io/mlflow/mlflow:v2.19.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              pip install --no-cache-dir --target /tmp/pylibs psycopg2-binary && \
+              export PYTHONPATH=/tmp/pylibs:${PYTHONPATH:-} && \
+              mlflow server \
+                --host 0.0.0.0 \
+                --port 5000 \
+                --workers 1 \
+                --backend-store-uri "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}" \
+                --default-artifact-root /tmp/mlflow-artifacts
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: host
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: port
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: dbname
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: password
+          ports:
+            - name: http
+              containerPort: 5000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/2.0/mlflow/experiments/search?max_results=1
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: tether-verified
+  labels:
+    app: mlflow
+spec:
+  type: ClusterIP
+  selector:
+    app: mlflow
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mlflow
+  namespace: tether-verified
+  labels:
+    app: mlflow
+spec:
+  to:
+    kind: Service
+    name: mlflow
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

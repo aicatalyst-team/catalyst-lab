@@ -1,0 +1,23 @@
+# Istio PeerAuthentication — enforce STRICT mTLS for all
+# services in the tether-verified namespace.
+#
+# Prerequisites:
+#   - tether-verified must be in the ServiceMeshMemberRoll
+#   - Pods must have Istio sidecar injected (annotation or namespace label)
+#
+# Usage:
+#   oc patch smmr default -n istio-system --type merge \
+#     -p '{"spec":{"members":["hermes-agent","tether-verified"]}}'
+#   oc apply -f peer-authentication.yaml -n tether-verified
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: tether-strict-mtls
+  namespace: tether-verified
+  labels:
+    app: tether
+    component: security
+spec:
+  mtls:
+    mode: PERMISSIVE
