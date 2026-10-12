@@ -6,12 +6,18 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+  HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   lint-python:
     name: Python Linting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -21,17 +27,42 @@ jobs:
       - name: Install linters
         run: pip install ruff pylint
 
+      - name: Find changed Python files
+        shell: bash
+        run: |
+          if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            git diff-tree --no-commit-id --name-only -r "$HEAD_SHA" -- '*.py'
+          else
+            git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" -- '*.py'
+          fi > "$RUNNER_TEMP/python-files"
+
       - name: Run ruff
-        run: ruff check .
+        shell: bash
+        run: |
+          if [[ ! -s "$RUNNER_TEMP/python-files" ]]; then
+            echo "No changed Python files."
+            exit 0
+          fi
+          mapfile -t files < "$RUNNER_TEMP/python-files"
+          ruff check "${files[@]}"
 
       - name: Run ruff format check
-        run: ruff format --check .
+        shell: bash
+        run: |
+          if [[ ! -s "$RUNNER_TEMP/python-files" ]]; then
+            echo "No changed Python files."
+            exit 0
+          fi
+          mapfile -t files < "$RUNNER_TEMP/python-files"
+          ruff format --check "${files[@]}"
 
   lint-markdown:
     name: Markdown Linting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -41,19 +72,52 @@ jobs:
       - name: Install markdownlint
         run: npm install -g markdownlint-cli
 
+      - name: Find changed Markdown files
+        shell: bash
+        run: |
+          if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            git diff-tree --no-commit-id --name-only -r "$HEAD_SHA" -- '*.md'
+          else
+            git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" -- '*.md'
+          fi > "$RUNNER_TEMP/markdown-files"
+
       - name: Run markdownlint
-        run: markdownlint '**/*.md' --ignore node_modules
+        shell: bash
+        run: |
+          if [[ ! -s "$RUNNER_TEMP/markdown-files" ]]; then
+            echo "No changed Markdown files."
+            exit 0
+          fi
+          mapfile -t files < "$RUNNER_TEMP/markdown-files"
+          markdownlint "${files[@]}" --ignore node_modules
 
   pre-commit:
     name: Pre-commit Hooks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Create baseline from the prior revision
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check detect-secrets
+          baseline_dir="$(mktemp -d)"
+          git archive "$BASE_SHA" | tar -x -C "$baseline_dir"
+          (
+            cd "$baseline_dir"
+            detect-secrets scan --all-files > "$GITHUB_WORKSPACE/.secrets.baseline"
+          )
+
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: >-
+            --from-ref ${{ env.BASE_SHA }}
+            --to-ref ${{ env.HEAD_SHA }}
