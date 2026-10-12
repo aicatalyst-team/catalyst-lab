@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050" role="img" aria-labelledby="title desc">
+  <title id="title">Project Tether on Red Hat OpenShift AI</title>
+  <desc id="desc">Reference architecture showing OpenShift AI as the evaluation boundary around KServe and vLLM model serving, Kata isolation, NVIDIA OpenShell, Tether verification, Hermes, persistent state, and observability.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#151515" flood-opacity="0.12"/>
+    </filter>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#151515" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4d4d4d"/>
+    </marker>
+    <marker id="red-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#ee0000"/>
+    </marker>
+    <linearGradient id="platform" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff"/>
+      <stop offset="1" stop-color="#f5f5f5"/>
+    </linearGradient>
+    <linearGradient id="tether" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff4f4"/>
+      <stop offset="1" stop-color="#ffe6e6"/>
+    </linearGradient>
+    <style>
+      .display { font-family: "Red Hat Display", "Red Hat Text", Arial, sans-serif; }
+      .body { font-family: "Red Hat Text", Arial, sans-serif; }
+      .eyebrow { font-size: 15px; font-weight: 700; letter-spacing: 2px; }
+      .title { font-size: 34px; font-weight: 700; }
+      .subtitle { font-size: 17px; font-weight: 400; }
+      .platform-title { font-size: 25px; font-weight: 700; }
+      .section { font-size: 15px; font-weight: 700; letter-spacing: 1.3px; }
+      .card-title { font-size: 18px; font-weight: 700; }
+      .card-copy { font-size: 14px; font-weight: 400; }
+      .small { font-size: 12px; font-weight: 400; }
+      .label { font-size: 12px; font-weight: 700; letter-spacing: .7px; }
+      .center { text-anchor: middle; }
+    </style>
+  </defs>
+
+  <!-- Red Hat presentation header -->
+  <rect width="1600" height="96" fill="#ee0000"/>
+  <text x="64" y="34" class="body eyebrow" fill="#fff">RED HAT AI CATALYST LAB</text>
+  <text x="64" y="73" class="display title" fill="#fff">Tether — OpenShift AI reference architecture</text>
+  <text x="1535" y="36" class="body small" fill="#fff" text-anchor="end">EVIDENCE-BOUND AGENT ACTIONS</text>
+  <text x="1535" y="61" class="body small" fill="#fff" text-anchor="end">Evaluation boundary: Red Hat OpenShift AI</text>
+
+  <!-- OpenShift AI outer evaluation boundary -->
+  <rect x="40" y="126" width="1520" height="876" rx="18" fill="url(#platform)" stroke="#b8b8b8" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="40" y="126" width="1520" height="86" rx="18" fill="#151515"/>
+  <rect x="40" y="194" width="1520" height="18" fill="#151515"/>
+  <circle cx="78" cy="169" r="18" fill="#ee0000"/>
+  <text x="78" y="175" class="display card-title center" fill="#fff">AI</text>
+  <text x="112" y="163" class="display platform-title" fill="#fff">Red Hat OpenShift AI</text>
+  <text x="112" y="188" class="body subtitle" fill="#d2d2d2">Evaluation boundary · projects, routes, GPU scheduling, model serving, service mesh, and observability</text>
+  <rect x="1326" y="151" width="188" height="35" rx="17" fill="#fff" fill-opacity=".12" stroke="#fff" stroke-opacity=".35"/>
+  <text x="1420" y="174" class="body label center" fill="#fff">OPENSHIFT AI PLATFORM</text>
+
+  <!-- Platform services row -->
+  <text x="78" y="251" class="body section" fill="#4d4d4d">OPENSHIFT AI PLATFORM SERVICES</text>
+  <rect x="78" y="270" width="424" height="92" rx="10" fill="#fff" stroke="#b8b8b8" stroke-width="1.5" filter="url(#soft-shadow)"/>
+  <rect x="78" y="270" width="8" height="92" rx="4" fill="#0066cc"/>
+  <text x="105" y="302" class="display card-title" fill="#151515">KServe + vLLM</text>
+  <text x="105" y="326" class="body card-copy" fill="#4d4d4d">InferenceService · GPU-backed model endpoint</text>
+  <text x="105" y="348" class="body small" fill="#6a6a6a">OpenAI-compatible inference traffic</text>
+
+  <rect x="526" y="270" width="504" height="92" rx="10" fill="#fff" stroke="#b8b8b8" stroke-width="1.5" filter="url(#soft-shadow)"/>
+  <rect x="526" y="270" width="8" height="92" rx="4" fill="#151515"/>
+  <text x="553" y="302" class="display card-title" fill="#151515">OpenShift AI control plane</text>
+  <text x="553" y="326" class="body card-copy" fill="#4d4d4d">Namespaces · routes · OSSM/mTLS · policy integration</text>
+  <text x="553" y="348" class="body small" fill="#6a6a6a">The platform where the proof-of-concept is evaluated</text>
+
+  <rect x="1054" y="270" width="428" height="92" rx="10" fill="#fff" stroke="#b8b8b8" stroke-width="1.5" filter="url(#soft-shadow)"/>
+  <rect x="1054" y="270" width="8" height="92" rx="4" fill="#6a6a6a"/>
+  <text x="1081" y="302" class="display card-title" fill="#151515">Shared platform services</text>
+  <text x="1081" y="326" class="body card-copy" fill="#4d4d4d">CNPG/PostgreSQL · MLflow · OTel · Tempo/Grafana</text>
+  <text x="1081" y="348" class="body small" fill="#6a6a6a">Certificates, audit trail, traces, and state</text>
+
+  <!-- Flow from model serving into the agent workload -->
+  <path d="M 290 362 L 290 414 L 1190 414 L 1190 454" fill="none" stroke="#0066cc" stroke-width="3" marker-end="url(#arrow)"/>
+  <rect x="632" y="391" width="336" height="30" rx="15" fill="#e7f1fb" stroke="#b8d5ee"/>
+  <text x="800" y="411" class="body label center" fill="#005ea8">OPENAI-COMPATIBLE INFERENCE PATH</text>
+
+  <!-- OpenShift workload boundary -->
+  <rect x="78" y="454" width="1404" height="472" rx="14" fill="#fafafa" stroke="#7a7a7a" stroke-width="1.5" stroke-dasharray="8 7"/>
+  <text x="104" y="486" class="body section" fill="#4d4d4d">OPENSHIFT AI WORKLOAD · tether-verified / agent sandbox</text>
+  <rect x="1240" y="466" width="214" height="28" rx="14" fill="#fff0f0" stroke="#f4a2a2"/>
+  <text x="1347" y="485" class="body label center" fill="#a30000">THREE ENFORCEMENT LAYERS</text>
+
+  <!-- Nested security stack -->
+  <rect x="104" y="512" width="620" height="370" rx="14" fill="#edf5fc" stroke="#0066cc" stroke-width="2"/>
+  <text x="132" y="544" class="display card-title" fill="#005ea8">1 · Kata / Sandboxed Containers</text>
+  <text x="132" y="566" class="body card-copy" fill="#4d4d4d">Kernel isolation and workload boundary</text>
+  <rect x="132" y="590" width="564" height="254" rx="12" fill="#fff7f0" stroke="#f36f21" stroke-width="2"/>
+  <text x="160" y="622" class="display card-title" fill="#b33a00">2 · NVIDIA OpenShell</text>
+  <text x="160" y="644" class="body card-copy" fill="#4d4d4d">Application-layer policy and privacy enforcement</text>
+  <rect x="160" y="668" width="508" height="142" rx="12" fill="url(#tether)" stroke="#ee0000" stroke-width="2"/>
+  <text x="186" y="700" class="display card-title" fill="#a30000">3 · Tether verification plane</text>
+  <text x="186" y="722" class="body card-copy" fill="#4d4d4d">F*/Pulse + Z3 proves content and substrate properties</text>
+  <rect x="186" y="744" width="210" height="48" rx="8" fill="#fff" stroke="#ee0000"/>
+  <text x="291" y="765" class="body label center" fill="#a30000">tether-sidecar</text>
+  <text x="291" y="782" class="body small center" fill="#6a6a6a">MemoryIntent gate</text>
+  <rect x="420" y="744" width="222" height="48" rx="8" fill="#fff" stroke="#ee0000"/>
+  <text x="531" y="765" class="body label center" fill="#a30000">tether-gateway</text>
+  <text x="531" y="782" class="body small center" fill="#6a6a6a">proof certificate / reject</text>
+  <text x="132" y="868" class="body small" fill="#4d4d4d">Seccomp · Landlock · cgroups · egress policy · privacy routing</text>
+
+  <!-- Agent runtime and evidence flow -->
+  <rect x="764" y="512" width="690" height="166" rx="12" fill="#fff" stroke="#b8b8b8" stroke-width="1.5" filter="url(#soft-shadow)"/>
+  <text x="792" y="544" class="body section" fill="#4d4d4d">AGENT RUNTIME + MODEL BOUNDARY</text>
+  <rect x="792" y="563" width="270" height="82" rx="9" fill="#fff7df" stroke="#e6b800"/>
+  <text x="927" y="592" class="display card-title center" fill="#725c00">Hermes agent</text>
+  <text x="927" y="615" class="body small center" fill="#4d4d4d">reasoning · tools · skills · memory</text>
+  <text x="927" y="633" class="body small center" fill="#4d4d4d">MemoryIntent → sidecar</text>
+  <rect x="1090" y="563" width="336" height="82" rx="9" fill="#f3efff" stroke="#7654c5"/>
+  <text x="1258" y="592" class="display card-title center" fill="#4d3198">Tether inference proxy</text>
+  <text x="1258" y="615" class="body small center" fill="#4d4d4d">observations + conclusions at model boundary</text>
+  <text x="1258" y="633" class="body small center" fill="#4d4d4d">Identity → Extraction → Aggregation → Derivation</text>
+  <path d="M 1090 604 L 1064 604" fill="none" stroke="#4d4d4d" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <path d="M 927 645 L 927 704 L 642 704" fill="none" stroke="#ee0000" stroke-width="2.5" marker-end="url(#red-arrow)"/>
+  <text x="810" y="698" class="body small" fill="#a30000">verified MemoryIntent / rejection with counterexample</text>
+
+  <!-- State and audit plane -->
+  <rect x="764" y="714" width="690" height="168" rx="12" fill="#fff" stroke="#b8b8b8" stroke-width="1.5" filter="url(#soft-shadow)"/>
+  <text x="792" y="746" class="body section" fill="#4d4d4d">PERSISTENT STATE + EVIDENCE</text>
+  <rect x="792" y="766" width="196" height="82" rx="9" fill="#f0f6ff" stroke="#8cb8e8"/>
+  <text x="890" y="795" class="display card-title center" fill="#005ea8">CNPG</text>
+  <text x="890" y="818" class="body small center" fill="#4d4d4d">proof certificates</text>
+  <rect x="1012" y="766" width="196" height="82" rx="9" fill="#f3faf5" stroke="#91c9a4"/>
+  <text x="1110" y="795" class="display card-title center" fill="#216e39">MLflow</text>
+  <text x="1110" y="818" class="body small center" fill="#4d4d4d">audit artifacts</text>
+  <rect x="1232" y="766" width="194" height="82" rx="9" fill="#f6f1ff" stroke="#b9a4e8"/>
+  <text x="1329" y="795" class="display card-title center" fill="#4d3198">OTel → Tempo</text>
+  <text x="1329" y="818" class="body small center" fill="#4d4d4d">traces + dashboard</text>
+  <path d="M 642 768 L 780 768" fill="none" stroke="#ee0000" stroke-width="2.5" marker-end="url(#red-arrow)"/>
+  <text x="684" y="758" class="body small" fill="#a30000">certificate + span</text>
+
+  <!-- Footer legend -->
+  <line x1="78" y1="958" x2="1482" y2="958" stroke="#d2d2d2"/>
+  <circle cx="98" cy="980" r="6" fill="#0066cc"/><text x="114" y="985" class="body small" fill="#4d4d4d">Kernel isolation</text>
+  <circle cx="246" cy="980" r="6" fill="#f36f21"/><text x="262" y="985" class="body small" fill="#4d4d4d">Runtime policy</text>
+  <circle cx="370" cy="980" r="6" fill="#ee0000"/><text x="386" y="985" class="body small" fill="#4d4d4d">Content verification</text>
+  <circle cx="534" cy="980" r="6" fill="#7654c5"/><text x="550" y="985" class="body small" fill="#4d4d4d">Inference observation</text>
+  <text x="1482" y="985" class="body small" fill="#6a6a6a" text-anchor="end">Reference deployment · not to scale</text>
+</svg>

@@ -1,0 +1,70 @@
+# OpenShell Sandbox Policy for Tether Gateway
+# Defines runtime constraints enforced by the OpenShell Policy Engine
+
+apiVersion: openshell.nvidia.com/v1alpha1
+kind: SandboxPolicy
+metadata:
+  name: tether-sandbox
+  namespace: tether-verified
+spec:
+  # Seccomp profile — restrict syscalls to verification workload
+  seccomp:
+    profile: RuntimeDefault
+    allowedSyscalls:
+      - read
+      - write
+      - open
+      - close
+      - mmap
+      - mprotect
+      - brk
+      - futex
+      - clone
+      - execve  # needed for Z3 solver invocation
+    deniedSyscalls:
+      - ptrace
+      - mount
+      - reboot
+      - kexec_load
+
+  # Landlock — filesystem access restrictions
+  landlock:
+    readOnly:
+      - /opt/fstar
+      - /opt/tether/specs
+      - /opt/tether/config
+    readWrite:
+      - /tmp/tether-work  # Z3 scratch space
+    denied:
+      - /etc/shadow
+      - /proc/kcore
+
+  # cgroups — resource limits for verification workloads
+  cgroups:
+    memory:
+      limit: 2Gi
+      swap: 0
+    cpu:
+      quota: 200000  # 2 cores
+      period: 100000
+    pids:
+      max: 64
+
+  # Network policy — Tether only talks to specific services
+  network:
+    egress:
+      - port: 4317  # OTel collector gRPC
+        protocol: TCP
+      - port: 4318  # OTel collector HTTP
+        protocol: TCP
+    ingress:
+      - port: 50051  # gRPC from agent sidecars
+        protocol: TCP
+      - port: 8080   # HTTP health/metrics
+        protocol: TCP
+    denyExternalTraffic: true
+
+  # Privacy Router — all inference stays local
+  privacyRouter:
+    mode: local_only
+    allowCloudInference: false

@@ -34,8 +34,9 @@ repos:
     hooks:
       - id: pylint
         name: pylint
-        entry: uv run pylint
-        language: system
+        entry: pylint --rcfile project-tether/pyproject.toml
+        language: python
+        additional_dependencies: [pylint>=4.0.5]
         types: [python]
 
       - id: check-sensitive-data

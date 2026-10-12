@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tether-gateway
+  namespace: tether-verified
+  labels:
+    app: tether-gateway
+    component: verification
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tether-gateway
+  template:
+    metadata:
+      labels:
+        app: tether-gateway
+        component: verification
+        maistra.io/expose-route: "true"
+      annotations:
+        sidecar.istio.io/inject: "true"
+        traffic.sidecar.istio.io/excludeInboundPorts: "8080"
+        traffic.sidecar.istio.io/excludeOutboundPorts: "5432,5000"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tether-gateway
+          image: quay.io/aicatalyst/tether-gateway:latest
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: HOME
+              value: /tmp
+            - name: FSTAR_HOME
+              value: /opt/fstar
+            - name: Z3_PATH
+              value: /usr/local/bin/z3
+            - name: TETHER_LOG_LEVEL
+              value: info
+            - name: TETHER_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: host
+            - name: TETHER_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: port
+            - name: TETHER_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: dbname
+            - name: TETHER_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: user
+            - name: TETHER_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: password
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.tether-verified.svc.cluster.local:5000
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.catalystlab-shared.svc.cluster.local:4317
+            - name: OTEL_SERVICE_NAME
+              value: tether-gateway
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: specs
+              mountPath: /opt/tether/specs
+              readOnly: true
+            - name: config
+              mountPath: /opt/tether/config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: specs
+          configMap:
+            name: tether-specs
+        - name: config
+          configMap:
+            name: tether-config
+        - name: tmp
+          emptyDir: {}

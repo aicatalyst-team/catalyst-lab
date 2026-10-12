@@ -1,0 +1,50 @@
+# Tether Gateway Configuration
+# Copy to tether-config.yaml and fill in <PLACEHOLDER> values
+
+gateway:
+  grpc_port: 50051
+  http_port: 8080
+  log_level: info
+
+verification:
+  # Maximum time to verify a single write (milliseconds)
+  timeout_ms: 500
+  # Properties to check (P1-P10)
+  enabled_properties:
+    - P1_inference_soundness
+    - P2_consistency
+    - P3_poisoning_resistance
+    - P4_completeness
+    - P5_ownership
+    - P6_frame_rule
+    - P7_bounds
+    - P8_concurrency
+    - P9_tool_scope
+    - P10_side_effect_containment
+  # Graduated trust — start in audit mode
+  mode: audit  # audit | enforce | passthrough
+
+fstar:
+  home: /opt/fstar
+  z3_path: /usr/local/bin/z3
+  specs_dir: /opt/tether/specs
+  # Incremental checking via F* MCP server
+  incremental: true
+
+memory_tiers:
+  hermes:
+    memory_md_bound: 2200   # chars
+    user_md_bound: 1375     # chars
+  openclaw:
+    session_context: jsonl
+    daily_logs: true
+    memory_md: true
+    vector_embeddings: true
+
+observability:
+  otlp_endpoint: http://otel-collector.catalystlab-shared.svc.cluster.local:4317
+  service_name: tether-gateway
+  # Export verification traces to the shared OTel collector
+  trace_verification: true
+  # Metric prefix for Tether counters/histograms
+  metric_prefix: tether

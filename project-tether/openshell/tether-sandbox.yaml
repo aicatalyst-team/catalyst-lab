@@ -1,0 +1,318 @@
+# Sandbox CR — instantiates the Tether+Hermes workload inside OpenShell
+#
+# Three-layer sandbox:
+#   Layer 1: Kata (kernel isolation via runtimeClassName)
+#   Layer 2: OpenShell (Landlock/seccomp via supervisor init container)
+#   Layer 3: Tether (F*/Z3 content verification via sidecar)
+#
+# Prerequisites:
+#   - OpenShell gateway running in tether-verified
+#   - Agent Sandbox Controller in agent-sandbox-system
+#   - quay-pull-secret, tether-pg-cluster-app, tether-config,
+#     tether-hermes-plugin, odh-trusted-ca-bundle in tether-verified
+#
+# Usage:
+#   oc apply -f openshell/tether-sandbox.yaml -n tether-verified
+---
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: tether-hermes
+  namespace: tether-verified
+  labels:
+    app.kubernetes.io/part-of: project-tether
+    tether.ai/verified: "true"
+  annotations:
+    tether.ai/layers: "kata,openshell,tether"
+spec:
+  operatingMode: Running
+  podTemplate:
+    metadata:
+      labels:
+        app: hermes-agent
+        component: sandbox
+        tether.ai/verified: "true"
+      annotations:
+        sidecar.istio.io/inject: "true"
+        traffic.sidecar.istio.io/excludeOutboundPorts: "5432,5000"
+    spec:
+      imagePullSecrets:
+        - name: quay-pull-secret
+      serviceAccountName: tether-openshell-sandbox
+      runtimeClassName: kata
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      initContainers:
+        - name: setup-hermes-config
+          image: registry.access.redhat.com/ubi9/ubi-micro:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cat > /opt/data/config.yaml <<'CONF'
+              memory:
+                provider: tether
+              CONF
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        # Hermes agent — API gateway mode
+        - name: hermes
+          image: quay.io/aicatalyst/hermes-agent:latest
+          imagePullPolicy: Always
+          command:
+            - /opt/hermes/venv/bin/python
+            - -m
+            - hermes_cli.main
+          args:
+            - gateway
+          env:
+            - name: HOME
+              value: /opt/data
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: HERMES_MEMORY_ENDPOINT
+              value: "localhost:50052"
+            - name: HERMES_VERIFY_WRITES
+              value: "true"
+            - name: TETHER_SIDECAR_URL
+              value: "http://localhost:8081/verify"
+            - name: SSL_CERT_FILE
+              value: /etc/pki/tls/custom/tls-ca-bundle.pem
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/tls/custom/tls-ca-bundle.pem
+            - name: API_SERVER_ENABLED
+              value: "true"
+            - name: API_SERVER_HOST
+              value: "0.0.0.0"
+            - name: API_SERVER_KEY
+              value: "internal-openshift-health-check"
+            - name: API_SERVER_PORT
+              value: "8080"
+            - name: GATEWAY_ALLOW_ALL_USERS
+              value: "true"
+            - name: HERMES_HOME
+              value: "/opt/data"
+            - name: LLM_MODEL
+              value: "gemma-4-31b"
+            - name: OPENAI_BASE_URL
+              value: "http://localhost:8082/v1"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+            - name: tether-plugin
+              mountPath: /opt/data/plugins/tether
+              readOnly: true
+            - name: trusted-ca
+              mountPath: /etc/pki/tls/custom
+              readOnly: true
+
+        # Tether verification sidecar (Layer 3 — content verification)
+        - name: tether-sidecar
+          image: quay.io/aicatalyst/tether-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - name: intercept
+              containerPort: 50052
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: HOME
+              value: /tmp
+            - name: TETHER_GRPC_PORT
+              value: "50052"
+            - name: TETHER_HEALTH_PORT
+              value: "8081"
+            - name: TETHER_GATEWAY_URL
+              value: tether-gateway.tether-verified.svc.cluster.local:50051
+            - name: TETHER_MODE
+              value: intercept
+            - name: TETHER_TIER1_BOUND
+              value: "2200"
+            - name: TETHER_SURFACES
+              value: "inference,skill,tool,temporal,witness"
+            - name: TETHER_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: host
+            - name: TETHER_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: port
+            - name: TETHER_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: dbname
+            - name: TETHER_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: user
+            - name: TETHER_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: password
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.tether-verified.svc.cluster.local:5000
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.catalystlab-shared.svc.cluster.local:4317
+            - name: OTEL_SERVICE_NAME
+              value: tether-sidecar
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tether-config
+              mountPath: /opt/tether/config
+              readOnly: true
+            - name: tether-work
+              mountPath: /tmp/tether-work
+            - name: tmp
+              mountPath: /tmp
+
+        # Tether inference proxy (Layer 3 — observation capture)
+        - name: tether-inference-proxy
+          image: quay.io/aicatalyst/tether-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - name: proxy
+              containerPort: 8082
+              protocol: TCP
+          env:
+            - name: HOME
+              value: /tmp
+            - name: TETHER_MODE
+              value: inference-proxy
+            - name: TETHER_PROXY_PORT
+              value: "8082"
+            - name: TETHER_LLM_UPSTREAM
+              value: "https://gemma-4-31b-predictor.ls-evals.svc.cluster.local:8443/v1"
+            - name: TETHER_LOG_LEVEL
+              value: info
+            - name: SSL_CERT_FILE
+              value: /etc/pki/tls/custom/tls-ca-bundle.pem
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/tls/custom/tls-ca-bundle.pem
+            - name: TETHER_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: host
+            - name: TETHER_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: port
+            - name: TETHER_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: dbname
+            - name: TETHER_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: user
+            - name: TETHER_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tether-pg-cluster-app
+                  key: password
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.tether-verified.svc.cluster.local:5000
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.catalystlab-shared.svc.cluster.local:4317
+            - name: OTEL_SERVICE_NAME
+              value: tether-inference-proxy
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: trusted-ca
+              mountPath: /etc/pki/tls/custom
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tether-config
+          configMap:
+            name: tether-config
+        - name: tether-plugin
+          configMap:
+            name: tether-hermes-plugin
+        - name: tether-work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: trusted-ca
+          configMap:
+            name: odh-trusted-ca-bundle
+            optional: true
+            items:
+              - key: ca-bundle.crt
+                path: tls-ca-bundle.pem
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi

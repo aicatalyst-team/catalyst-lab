@@ -1,0 +1,880 @@
+%%% Tether: Formally Verified Persistent Memory for Agentic AI
+%%% ACM acmart (sigplan) — draft for Coblenz demo, July 2026
+\documentclass[sigplan,screen,nonacm]{acmart}
+
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{subcaption}
+
+% F* convenience macros
+\newcommand{\fstar}{F\ensuremath{^\star}}
+\newcommand{\pointsto}{\ensuremath{\mapsto}}
+\newcommand{\sepconj}{\ensuremath{\mathbin{*\!*}}}
+
+% Listing style for F*
+\lstdefinelanguage{fstar}{
+  morekeywords={module,open,type,let,fn,val,match,with,if,else,not,
+    requires,ensures,returns,pure,Pure,erased,nat,bool,string,true,false,
+    Pulse,Lib,Pervasives,FStar,List,Tot,String},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{(*}{*)},
+  morestring=[b]",
+  literate={|->}{{$\mapsto$}}2
+           {**}{{$\mathbin{*\!*}$}}2
+           {/\\}{{$\wedge$}}2
+           {<=}{{$\leq$}}2
+           {=>}{{$\Rightarrow$}}2,
+}
+
+\lstset{
+  basicstyle=\small\ttfamily,
+  keywordstyle=\bfseries\color{blue!70!black},
+  commentstyle=\itshape\color{gray},
+  stringstyle=\color{red!70!black},
+  columns=flexible,
+  keepspaces=true,
+  frame=single,
+  framerule=0.4pt,
+  xleftmargin=1em,
+  xrightmargin=0.5em,
+  aboveskip=0.8em,
+  belowskip=0.5em,
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=2,
+  captionpos=b,
+}
+
+%%% ---------- metadata ----------
+
+\title{Tether: Formally Verified Persistent Memory for Agentic AI}
+\subtitle{Preventing Hallucination Persistence Loops with Separation Logic on the Red Hat AI Stack}
+
+\author{Gerald Trotman}
+\affiliation{%
+  \institution{Red Hat}
+  \country{USA}
+}
+
+\begin{abstract}
+AI agents with persistent memory face a class of errors no existing
+framework addresses with formal methods: an agent hallucinates, saves the
+hallucination to persistent storage, and treats its own fiction as ground
+truth in all future sessions---a self-reinforcing \emph{hallucination
+persistence loop}. We present Tether ($\pi\rho\hat{\alpha}\xi\iota\varsigma$---verified
+action), a runtime verification system that imposes a proof obligation on
+every persist operation across five agent execution surfaces: model
+inference, code generation, tool invocation, skill persistence, and
+multi-agent communication. Tether uses \fstar{}/Pulse separation logic with
+Z3 SMT proof discharge to verify 10 properties spanning content soundness
+and memory substrate safety. A key architectural contribution is the
+\emph{inference proxy}---an OpenAI-compatible reverse proxy that captures
+observations and conclusions at the model serving boundary, enabling
+automatic inference rule classification without framework modification. We
+deploy Tether as a verification sidecar alongside the Hermes agentic
+framework on Red Hat OpenShift AI with vLLM/KServe model serving, inside a
+three-layer sandboxing architecture: OpenShift Sandboxed Containers (Kata)
+for kernel isolation, NVIDIA OpenShell for application-layer enforcement,
+and Tether for content verification---empirically validated as
+complementary~\cite{osc2026layered}. Our evaluation shows 22 verified \fstar{}
+specifications, 175 Python runtime tests, 15 incorrectness lemmas, and
+zero-admit formal proofs covering OWASP ASI06 memory poisoning vectors. To
+our knowledge, Tether is the first system to apply separation logic to AI
+agent persistent memory.
+\end{abstract}
+
+\keywords{formal verification, separation logic, agentic AI, persistent memory, hallucination detection, \fstar{}, Pulse}
+
+\begin{document}
+\sloppy
+
+\maketitle
+
+%%% ================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Agentic AI frameworks---systems where an LLM autonomously invokes tools,
+generates code, and persists state across sessions---are moving into
+production. Hermes~\cite{hermes2026} (Nous Research), OpenClaw, and Kagent
+(Red Hat) each implement persistent memory architectures that survive pod
+restarts, enabling agents to learn from experience. This persistence is also
+the attack surface.
+
+\paragraph{The hallucination persistence loop.}
+An agent observes ``GPU utilization at 87\%,'' but the model confabulates
+``the cluster is overloaded and will crash.'' If this conclusion enters
+persistent memory, every future session begins with ``the cluster is
+overloaded'' as established fact. The agent compounds the error: it
+references the fabricated fact, derives further conclusions, and stores those
+too. Each session reinforces the fiction.
+
+No existing mitigation provides formal guarantees against this:
+
+\begin{itemize}
+  \item Sandbox isolation (OpenShell~\cite{nvidia2026openshell}, gVisor)
+    constrains runtime behavior but does not inspect content.
+  \item Content filtering (heuristic similarity, embedding distance) catches
+    some fabrications but cannot prove soundness.
+  \item Type systems for agent control
+    (LBAC/TypeGuard~\cite{zhou2026lbac}, TACIT~\cite{odersky2026tacit})
+    verify code safety but do not address persistent memory.
+  \item Verification-aware code generation
+    (Dafny-as-IL~\cite{li2025dafny}) verifies generated code but not stored
+    reasoning.
+\end{itemize}
+
+\textbf{Tether} closes this gap by treating every memory write as a
+verification obligation. The agent must prove---using a formally verified
+pipeline---that what it persists is derivable from real observations through
+valid inference. Not ahead-of-time program verification, but
+\emph{proof-per-action at runtime} across five execution surfaces.
+
+\paragraph{The observation capture problem.}
+When verification hooks intercept memory writes at the framework level, they
+see only the conclusion---the content the agent wants to persist. The
+observation that justified the conclusion (a tool output, a user message) is
+lost. Without the observation, the Identity check degenerates to
+\texttt{content == content}---always true. Any hallucination passes. Tether
+solves this with an \emph{inference proxy} (Section~\ref{sec:proxy}) that
+sits at the model serving boundary, capturing both the prompt (observations)
+and the response (conclusions) before they reach the agent. This is
+framework-agnostic: the agent sets \texttt{OPENAI\_BASE\_URL} to the proxy
+and requires no code changes.
+
+\subsection{Five Verification Surfaces}
+
+\begin{table}[t]
+\caption{Tether verification surfaces and their correspondence to Hermes agent features.}
+\label{tab:surfaces}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Surface} & \textbf{What Tether Proves} & \textbf{Hermes Feature} \\
+\midrule
+1. Model inference & Conclusion follows from observations & vLLM/KServe $\to$ reasoning \\
+2. Code generation & Generated skill satisfies spec & Auto-generated skills \\
+3. Tool invocation & Tool output is trustworthy & kubectl, web scrape, API \\
+4. Skill persistence & Stored skill still valid & MEMORY.md, SQLite, skills \\
+5. Multi-agent & Agent B can verify Agent A's proof & Multi-platform sessions \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Contributions}
+
+\begin{enumerate}
+  \item \textbf{Formalization.} 10 verification properties (P1--P10)
+    spanning content soundness and memory substrate safety, specified in
+    \fstar{}/Pulse with Z3 proof discharge. The first application of
+    separation logic to AI agent persistent memory.
+
+  \item \textbf{Verification strength spectrum.} An auto-active verification
+    design~\cite{leino2010dafny} that balances expressiveness and control:
+    five inference rule categories from Identity (full verification) through
+    Derivation (weakest). The agent chooses the rule; the system checks the
+    obligation.
+
+  \item \textbf{Incorrectness lemmas.} Following
+    Gardner's~\cite{gardner2026incorrectness} incorrectness logic, we prove
+    not only that verified writes satisfy properties (soundness of
+    acceptance) but that fabricated inputs are necessarily rejected
+    (soundness of rejection).
+
+  \item \textbf{Deployable three-layer architecture.} Tether deploys as a
+    verification sidecar on Red Hat OpenShift AI alongside Hermes with
+    vLLM/KServe model serving, inside a three-layer sandboxing
+    architecture~\cite{osc2026layered}: Kata kernel isolation (Layer~1),
+    NVIDIA OpenShell~\cite{nvidia2026openshell} application sandbox
+    (Layer~2), and Tether content verification (Layer~3). KaRaMeL
+    extraction~\cite{protzenko2017verified} compiles verified
+    \fstar{}/Pulse to native C for production latency targets.
+\end{enumerate}
+
+
+%%% ================================================================
+\section{Background and Motivation}
+\label{sec:background}
+
+\subsection{Agent Persistent Memory Architectures}
+
+\textbf{Hermes Agent}~\cite{hermes2026} (Nous Research) implements a closed
+learning loop on Red Hat OpenShift AI: it generates reusable skills from
+multi-step tasks, maintains bounded persistent memory (MEMORY.md at 2{,}200
+chars, USER.md at 1{,}375 chars), and searches conversation history via
+SQLite FTS5. Skills self-improve based on feedback and persist across pod
+restarts via PersistentVolumeClaim. Deployed on UBI~9 with vLLM model
+serving via KServe InferenceService.
+
+\paragraph{The persistence surface.}
+Hermes writes to five targets: curated memory (MEMORY.md), user model
+(USER.md), conversation database (SQLite), generated skills
+(\texttt{/opt/data/skills/}), and cron schedules. Every write survives pod
+restarts. A fabrication entering any target compounds indefinitely.
+
+\subsection{Related Verification Approaches}
+
+\textbf{Dafny as Verification-Aware Intermediate Language}~\cite{li2025dafny}.
+LLM generates Dafny code $\to$ Dafny verifier checks $\to$ compiled to
+target language. Addresses Surface~2 (code generation) but not persistent
+memory. Tether adopts the ``verification-aware IL'' pattern: \fstar{} is our
+intermediate verification language, but we verify \emph{inference
+soundness}, not just code correctness.
+
+\textbf{Language-Based Agent Control / TypeGuard}~\cite{zhou2026lbac}.
+Policies encoded as Haskell types; agent code must type-check before
+execution. Abstract data types enforce data provenance and information flow
+control. Dual LLM architecture (privileged + quarantined) generalizes
+capability separation. Addresses Surfaces~1 and~3. Tether adopts the
+``policies-as-types'' pattern: our algebraic \texttt{inference\_rule} type
+forces evidence per claim. But Tether uses refinement types with proof
+discharge (stronger than Haskell's type system) and addresses persistent
+memory (which LBAC does not).
+
+\textbf{Tracked Capabilities for Safer Agents / TACIT}~\cite{odersky2026tacit}.
+Scala~3 capture checking tracks capabilities through the type system.
+\texttt{Classified[T]} wrapper enforces local purity---functions processing
+classified data cannot leak it. MCP server implementation. Addresses
+Surfaces~3 and~5. Tether adopts the ``tracked capabilities'' pattern: proof
+certificates are capabilities that must be presented on read. But Tether
+uses separation logic for memory ownership (P6)---a dimension no other
+agent verification system addresses.
+
+\subsection{What Tether Adds Beyond All Three}
+
+\begin{table}[t]
+\caption{Capability comparison with concurrent verification approaches for agentic AI.}
+\label{tab:comparison}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Capability} & \textbf{Dafny-IL} & \textbf{LBAC} & \textbf{TACIT} & \textbf{Tether} \\
+\midrule
+Code verification        & \checkmark & ---        & ---        & \checkmark \\
+Inference soundness      & ---        & \checkmark & ---        & \checkmark \\
+Tool trust / IFC         & ---        & \checkmark & \checkmark & \checkmark \\
+Capability tracking      & ---        & ---        & \checkmark & \checkmark \\
+Multi-agent safety       & ---        & ---        & \checkmark & \checkmark \\
+\textbf{Persistent memory}       & ---        & ---        & ---        & \textbf{\checkmark} \\
+\textbf{Separation logic}        & ---        & ---        & ---        & \textbf{\checkmark} \\
+\textbf{Incorrectness lemmas}    & ---        & ---        & ---        & \textbf{\checkmark} \\
+\textbf{Memory poisoning (ASI06)} & ---       & ---        & ---        & \textbf{\checkmark} \\
+\textbf{Three-layer sandbox}     & ---        & ---        & ---        & \textbf{\checkmark} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%%% ================================================================
+\section{Formalization}
+\label{sec:formalization}
+
+\subsection{Core Types (\texttt{TetherTypes.fst})}
+
+Algebraic type with evidence per inference rule---the auto-active pattern:
+
+\begin{lstlisting}[language=fstar,caption={Inference rule algebraic type with per-variant evidence.},label={lst:rule}]
+type inference_rule =
+  | RuleIdentity
+  | RuleExtraction  : ev:extraction_evidence  -> inference_rule
+  | RuleAggregation : ev:aggregation_evidence -> inference_rule
+  | RuleToolResult  : ev:tool_evidence        -> inference_rule
+  | RuleDerivation  : ev:derivation_evidence  -> inference_rule
+\end{lstlisting}
+
+Graduated trust for observation provenance:
+
+\begin{lstlisting}[language=fstar,caption={Trust levels for observation sources.},label={lst:trust}]
+type trust_level =
+  | DirectObservation | ToolOutput | ExternalInput
+  | AgentGenerated | Unverified
+\end{lstlisting}
+
+\subsection{Verification Strength Spectrum (\texttt{TetherPredicates.fst})}
+
+\begin{table}[t]
+\caption{Verification strength spectrum: the agent chooses the rule; the system checks the obligation.}
+\label{tab:spectrum}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Rule} & \textbf{Obligation} & \textbf{Strength} & \textbf{Expressiveness} \\
+\midrule
+Identity    & conclusion = single premise   & Full     & Observation relay only \\
+Extraction  & conclusion $\subseteq$ source & Strong   & Substring extraction \\
+Aggregation & $|$concl.$|$ $\leq$ $\Sigma|$premises$|$ + token $\subseteq$ & Moderate & Multi-source synthesis \\
+ToolResult  & tool is trusted               & Delegated & Full tool output \\
+Derivation  & rule\_id non-empty + token $\subseteq$ & Weakest & Domain reasoning \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Content Properties (P1--P4)}
+
+\begin{description}
+  \item[P1 Inference Soundness] (\texttt{AgentReasoning}):
+    \texttt{chain\_well\_formed} checks structural ordering AND semantic rule
+    obligations.
+  \item[P2 Consistency:] \texttt{no\_contradiction} against existing memory
+    state.
+  \item[P3 Poisoning Resistance] (\texttt{PoisonDetection}):
+    Case-insensitive pattern matching against OWASP
+    ASI06~\cite{owasp2026asi06} vectors---instruction overrides, role
+    escalations, exfiltration markers. Declared channel trust
+    (\texttt{source\_trusted}) AND TACIT~\cite{odersky2026tacit}
+    observation provenance trust---all observations must have trusted
+    provenance (LBAC~\cite{zhou2026lbac} validates tool message
+    \texttt{tool\_call\_id} against declared \texttt{tool\_calls}).
+  \item[P4 Completeness] (\texttt{CompletenessCheck}): Domain-spec critical
+    observations covered and required keys present.
+\end{description}
+
+\subsection{Substrate Properties (P5--P6)}
+
+Pulse separation logic for memory ownership:
+
+\begin{lstlisting}[language=fstar,caption={Verified write with Pulse separation logic postconditions.},label={lst:vwrite}]
+fn verified_write (agent: agent_id) (region: memory_region) ...
+  requires region |-> v
+  returns r: write_result
+  ensures (match r with
+           | WriteOk -> region |-> conclusion.me_content
+                        ** pure (...)
+           | _ -> region |-> v)
+\end{lstlisting}
+
+\begin{description}
+  \item[P5 Bounds:] Content length $\leq$ tier bound (2{,}200 chars for
+    Hermes Tier~1).
+  \item[P6 Ownership:] \texttt{region \pointsto{} v}---agent holds the
+    points-to assertion; the Pulse frame rule guarantees writing to
+    one region does not modify another.
+\end{description}
+
+\subsection{Tool and Skill Properties (P9--P10)}
+
+\begin{description}
+  \item[P9 Tool Scope:] Tool call arguments within declared API surface.
+  \item[P10 Side-Effect Containment:] Observed side effects $\subseteq$
+    declared side effects.
+\end{description}
+
+\subsection{Skill Verification (Surface 2)}
+
+Generated skills must satisfy a specification before persisting:
+
+\begin{lstlisting}[language=fstar,caption={Skill safety predicate composing interface, scope, and content checks.},label={lst:skill}]
+val skill_safe_to_persist :
+  spec:skill_spec -> code:skill_code -> pp:poison_patterns ->
+  Pure bool
+    (ensures fun b -> b ==>
+      skill_interface_valid spec code /\
+      skill_tools_within_scope spec code /\
+      content_safe code.sc_body pp)
+\end{lstlisting}
+
+\subsection{Temporal Validity (Surface 4)}
+
+Proof certificates carry validity windows for re-verification:
+
+\begin{lstlisting}[language=fstar,caption={Temporal validity: certificates expire and must be re-verified.},label={lst:temporal}]
+val certificate_valid_at :
+  cert:temporal_certificate -> time:nat ->
+  Pure bool
+    (ensures fun b -> b ==>
+      cert.tc_valid_from <= time /\
+      time <= cert.tc_valid_until)
+\end{lstlisting}
+
+\subsection{Multi-Agent Proof Transport (Surface 5)}
+
+Session types~\cite{gay2026session} for cross-agent proof witness transport:
+
+\begin{lstlisting}[language=fstar,caption={Cross-agent verification: Agent B verifies Agent A's proof witness.},label={lst:witness}]
+val cross_agent_verify :
+  witness:proof_witness -> entry:memory_entry ->
+  Pure bool
+    (ensures fun b -> b ==>
+      witness.pw_content_hash = hash entry.me_content /\
+      witness.pw_source_trusted)
+\end{lstlisting}
+
+\subsection{Normalization Tests (\texttt{TetherNormTests.fst})}
+
+\texttt{assert\_norm} evaluates verified functions on concrete inputs at
+type-checking time---pure computation in the \fstar{} normalizer, no Z3
+needed. Bridges universal proofs and existential tests by confirming the
+specification computes correctly on the same inputs the Python test suite
+exercises.
+
+\subsection{Incorrectness Lemmas (\texttt{TetherLemmas.fst})}
+
+Following Gardner~\cite{gardner2026incorrectness} (OPLSS 2026), we prove
+rejection is \emph{necessary} under attack conditions:
+
+\begin{itemize}
+  \item L1: Identity fabrication $\to$ always rejected
+  \item L2: Multi-premise identity $\to$ always rejected
+  \item L3: Untrusted tool output $\to$ always rejected
+  \item L4: Empty inference chain $\to$ always rejected
+  \item L5: Evidence-free derivation $\to$ always rejected
+  \item L6: Novel token derivation (LBAC IFC) $\to$ always rejected
+  \item L7: Novel token aggregation (LBAC IFC) $\to$ always rejected
+  \item L8: Contradiction with existing memory $\to$ always rejected
+  \item L9: Unverified observation provenance $\to$ always rejected
+  \item L10: Agent-generated observation provenance $\to$ always rejected
+\end{itemize}
+
+
+\subsection{Inference Proxy Specification (\texttt{InferenceProxy.fst})}
+\label{sec:proxy-spec}
+
+The inference proxy operates on OpenAI chat completion messages. We model
+these in \fstar{} and specify two key functions:
+
+\begin{lstlisting}[language=fstar,caption={Automatic inference rule classification at the model serving boundary.},label={lst:classify}]
+let classify_rule (obs_contents: list string)
+                  (conclusion: string) : inference_rule =
+  if existsb (fun o -> o = conclusion) obs_contents
+  then RuleIdentity
+  else match find (fun o ->
+         contains_substring o conclusion) obs_contents with
+    | Some matching ->
+        RuleExtraction ({ ext_source_premise = matching })
+    | None ->
+        if length conclusion <= total_string_length obs_contents
+        then RuleAggregation
+               ({ agg_source_premises = obs_contents })
+        else RuleDerivation
+               ({ de_domain_rule_id = "llm-inference" })
+\end{lstlisting}
+
+The classification is conservative: it assigns the \emph{strongest} rule
+whose structural precondition is met (Identity $>$ Extraction $>$
+Aggregation $>$ Derivation). Observation extraction filters chat messages to
+retain only evidence-bearing roles (\texttt{RoleTool}, \texttt{RoleUser});
+system and assistant messages produce no observations. LBAC
+provenance~\cite{zhou2026lbac} validation matches each tool message's
+\texttt{tool\_call\_id} against declared \texttt{tool\_calls} in preceding
+assistant messages---matched tools receive \texttt{ToolOutput} trust,
+unmatched tools receive \texttt{Unverified} trust. TACIT~\cite{odersky2026tacit}
+trust derivation at P3 then rejects any write whose observations include
+unverified provenance, composing the two checks into a defense against
+injected tool responses.
+
+\subsection{Proxy Incorrectness Lemmas (\texttt{ProxyLemmas.fst})}
+\label{sec:proxy-lemmas}
+
+Five incorrectness lemmas prove the proxy classification is tight---correct
+acceptance AND correct rejection:
+
+\begin{itemize}
+  \item L\textsubscript{P1} (\texttt{verbatim\_relay\_verified}): If a tool
+    message's content matches the conclusion verbatim, \texttt{classify\_rule}
+    returns \texttt{RuleIdentity}. No false negatives for faithful relay.
+  \item L\textsubscript{P2} (\texttt{novel\_content\_not\_identity}): If no
+    message content matches the conclusion, \texttt{classify\_rule} does
+    \emph{not} return \texttt{RuleIdentity}. Novel hallucinations cannot be
+    classified as verbatim relay.
+  \item L\textsubscript{P3} (\texttt{no\_evidence\_means\_derivation}): If all
+    messages are system/assistant (no tool or user input), any non-empty
+    conclusion is classified as \texttt{RuleDerivation}. Evidence-free
+    conclusions cannot claim identity, extraction, or aggregation.
+  \item L\textsubscript{P4} (\texttt{unmatched\_tool\_gets\_unverified}): An unmatched
+    tool response receives untrusted provenance.
+  \item L\textsubscript{P5} (\texttt{matched\_tool\_is\_trusted}): A declared tool response
+    receives trusted provenance.
+\end{itemize}
+
+L\textsubscript{P2} composes with core lemma L1: together they prove that
+hallucinated content is rejected when the deployment requires Identity-or-better
+classification. Each proxy lemma is supported by an auxiliary lemma that
+bridges message-level and observation-level reasoning via induction on the
+message list.
+
+
+%%% ================================================================
+\section{Implementation}
+\label{sec:implementation}
+
+\subsection{Tether Verification Gateway}
+
+\paragraph{Python runtime architecture.}
+The Python runtime mirrors the \fstar{} specification with structural
+fidelity. \texttt{gateway\_client.py} (533 lines) implements
+\texttt{TetherGatewayClient}, which executes the same verification pipeline
+as \texttt{VerifiedWrite.fst}: P1 (inference soundness) $\to$ P2
+(consistency) $\to$ P3 (poison detection + TACIT trust derivation) $\to$
+P4 (completeness) $\to$ P5 (bounds) $\to$ P6 (ownership + certificate).
+Each \fstar{} function---\texttt{chain\_well\_formed},
+\texttt{no\_contradiction}, \texttt{content\_safe},
+\texttt{completeness\_check}---has a Python mirror that accepts the same
+arguments, applies the same case analysis, and returns the same verdict. The
+algebraic \texttt{inference\_rule} type maps to a Python dataclass hierarchy
+with identical constructors: \texttt{RuleIdentity},
+\texttt{RuleExtraction(evidence)}, \texttt{RuleAggregation(evidence)},
+\texttt{RuleToolResult(evidence)}, and \texttt{RuleDerivation(evidence)}.
+
+\paragraph{gRPC service definition.}
+\texttt{tether.proto} defines six RPCs that cover all five verification
+surfaces: \texttt{VerifyWrite} (Surface~1, general memory persistence),
+\texttt{VerifyInference} (Surface~1, inference chain verification),
+\texttt{VerifySkill} (Surface~2, skill persistence),
+\texttt{VerifyToolInvocation} (Surface~3, tool output trust),
+\texttt{VerifyTemporal} (Surface~4, re-verification with validity windows),
+and \texttt{VerifyWitness} (Surface~5, cross-agent proof transport). The
+Protobuf \texttt{oneof} construct in the \texttt{InferenceRule} message
+mirrors the \fstar{} algebraic \texttt{inference\_rule} type: each variant
+carries its own evidence payload, ensuring that the wire format enforces the
+same structural obligations as the formal specification.
+
+\paragraph{Proof certificate lifecycle.}
+On a successful \texttt{WriteOk} verdict, the gateway constructs a proof
+certificate containing: a SHA-256 content hash of the persisted content, the
+inference rule that justified the write, the list of properties satisfied (a
+subset of P1--P10), and an OpenTelemetry trace ID linking the certificate to
+the observability pipeline. For Surface~4, a \texttt{TemporalCertificate}
+wraps the base certificate with a validity window (\texttt{valid\_from},
+\texttt{valid\_until}), enabling periodic re-verification. For Surface~5, a
+\texttt{ProofWitness} packages the certificate with the originating agent's
+identity and a trust attestation.
+
+\paragraph{Sidecar deployment.}
+\texttt{hermes-sidecar-patch.yaml} patches the Hermes agent pod to include
+the Tether verification sidecar as an additional container. The sidecar
+listens on port 50052 and forwards verified requests to the gateway on port
+50051. Setting \texttt{HERMES\_VERIFY\_WRITES=true} enables write
+interception. The entire sidecar runs within the NVIDIA
+OpenShell~\cite{nvidia2026openshell} sandbox.
+
+\subsection{Inference Proxy}
+\label{sec:proxy}
+
+The inference proxy is an OpenAI-compatible reverse proxy that intercepts
+\texttt{/v1/chat/completions} requests between the agent and KServe model
+serving. On each request, the proxy: (1)~extracts observations from the
+\texttt{messages[]} array (tool outputs and user inputs), (2)~forwards the
+request to the upstream KServe InferenceService, (3)~classifies the
+inference rule by comparing the response to the captured observations via
+\texttt{classify\_rule}, (4)~stores the verification result in PostgreSQL
+and emits an OTel span, and (5)~returns the response to the agent with
+\texttt{X-Tether-Rule} and \texttt{X-Tether-Status} headers.
+
+The proxy is framework-agnostic: any agent using the OpenAI chat completion
+API can be verified by setting \texttt{OPENAI\_BASE\_URL} to the proxy
+endpoint. No framework modification is required. The proxy deploys as a
+sidecar container alongside the agent pod, using the same image as the
+verification gateway with \texttt{TETHER\_MODE=inference-proxy}.
+
+\subsection{Three-Layer Sandboxing on Red Hat OpenShift AI}
+\label{sec:threelayer}
+
+Recent empirical work~\cite{osc2026layered} validates that dual protection
+is necessary for agent workloads: OpenShift Sandboxed Containers (Kata)
+stops kernel-level exploits (CVE-2026-31431), while OpenShell stops
+application-layer data exfiltration---neither alone is sufficient. Tether
+adds a third layer that neither addresses: \emph{content verification} of
+what the agent persists.
+
+\paragraph{Reference deployment.}
+The complete architecture is rendered in the repository-level
+\texttt{tether-architecture.svg} and its interactive HTML companion. The
+rendering makes Red Hat OpenShift AI the outer evaluation boundary: KServe/vLLM
+model serving and OpenShift platform services surround the workload, while
+Kata, NVIDIA OpenShell, and Tether provide progressively stronger isolation,
+runtime policy, and evidence-bound verification. The deployment path is
+KServe/vLLM inference \(\to\) Tether inference proxy \(\to\) Hermes agent
+\(\to\) Tether sidecar/gateway \(\to\) CNPG, MLflow, and OTel-backed evidence.
+
+\paragraph{Extending Red Hat OpenShift AI TrustyAI.}
+RHOAI TrustyAI monitors model-level trust: fairness metrics, explainability
+(SHAP/LIME), and data drift detection at the InferenceService boundary.
+Tether extends this trust model to the agent level. TrustyAI asks ``is the
+model behaving fairly?''; Tether asks ``is the agent's memory grounded in
+real evidence?'' The inference proxy sits natively in the RHOAI model serving
+pipeline, using the same KServe API, OpenShift Service Mesh (OSSM) mTLS,
+ODH CA chain, CNPG storage, OTel tracing, and MLflow audit trail. Together
+they provide a two-layer trust architecture: model trust (TrustyAI) and
+agent trust (Tether).
+
+\subsection{Complementary Enforcement}
+
+\begin{table}[t]
+\caption{Three-layer enforcement: each layer addresses threats the others cannot.}
+\label{tab:enforcement}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Threat} & \textbf{Kata (L1)} & \textbf{OpenShell (L2)} & \textbf{Tether (L3)} \\
+\midrule
+Container escape               & \checkmark & ---           & --- \\
+Kernel exploit (CVE-2026-31431) & \checkmark & ---          & --- \\
+Agent reads another's files    & ---        & Policy Engine & P6 ownership \\
+Memory write within bounds     & ---        & Policy Engine & P5 bounds \\
+Data exfiltration              & ---        & Policy Engine & --- \\
+Stored reasoning unsound       & ---        & ---           & P1 soundness \\
+Memory poisoning (ASI06)       & ---        & ---           & P3 detection \\
+Sensitive context leak         & ---        & Privacy Router & --- \\
+Concurrent memory race         & ---        & ---           & --- \\
+Hallucination persistence loop & ---        & ---           & P1 + L\textsubscript{P2} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%%% ================================================================
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{Verification Results}
+
+\paragraph{Methodology.}
+\fstar{} specifications are verified using \texttt{fstar.exe} in dependency
+order: \texttt{TetherTypes.fst} (no dependencies), then
+\texttt{TetherPredicates.fst}, then property modules, then composite
+modules (\texttt{VerifiedWrite.fst}, \texttt{VerifiedSkillWrite.fst}), and
+finally test and lemma modules. Python runtime tests use \texttt{pytest}
+with markers for \fstar{} mirror tests, OWASP vectors, and integration
+tests.
+
+\begin{table}[t]
+\caption{Verification evidence summary.}
+\label{tab:results}
+\small
+\begin{tabular}{@{}lrl@{}}
+\toprule
+\textbf{Artifact} & \textbf{Count} & \textbf{Status} \\
+\midrule
+\fstar{} specifications    & 22 & All verified (zero admits) \\
+Python runtime tests        & 175 & All pass \\
+OWASP ASI06 vectors         & 23 + 8 benign & Full coverage \\
+Normalization tests         & 31 assert\_norm & Type-checker evaluated \\
+Incorrectness lemmas (core) & 10 (L1--L10) & All verified \\
+Incorrectness lemmas (proxy) & 5 (L\textsubscript{P1}--L\textsubscript{P5}) & All verified \\
+Proto messages              & 30+ & Request/response/enum \\
+Hallucination loop          & 1 canonical & Rejected at P1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Verification Latency}
+
+\fstar{} verification is a build-time cost, not a runtime cost. Each
+\fstar{} module verifies in 1--3 seconds; the full 22-module suite
+completes in under 40 seconds. The runtime Python gateway performs pure
+function evaluation---pattern matching, string comparison, length checks,
+hash computation---on bounded inputs. Hermes Tier~1 content (MEMORY.md) is
+capped at 2{,}200 characters; Tier~2 (USER.md) at 1{,}375 characters. On
+these bounded inputs, the Python verification pipeline completes in
+microseconds. KaRaMeL extraction to C~\cite{protzenko2017verified} would
+reduce even this cost to sub-microsecond levels.
+
+\subsection{OWASP ASI06 Attack Coverage}
+
+The OWASP ASI06~\cite{owasp2026asi06} (Memory Poisoning) attack surface is
+tested with 31 vectors organized into four categories.
+\emph{Instruction overrides} (8 vectors): attempts to inject system-level
+directives into persistent memory. \emph{Role escalation} (6 vectors):
+attempts to elevate trust level. \emph{Exfiltration markers} (6 vectors):
+attempts to embed data exfiltration payloads. \emph{Compound attacks} (3
+vectors): multi-technique payloads. All 23 attack vectors are rejected at P3
+by \texttt{PoisonDetection.fst}. Additionally, 8 benign vectors are
+confirmed as accepted, establishing that the detector is false-negative-free
+without being overly restrictive.
+
+\subsection{Normalization Test Bridge}
+
+The \texttt{assert\_norm} mechanism in \fstar{} evaluates a verified
+function on a concrete input during type-checking---the \fstar{} normalizer
+reduces the expression to a boolean value and the type-checker confirms it
+equals \texttt{true}. The normalization test bridge exploits this to connect
+two distinct verification regimes: universal proofs (Z3 discharges a
+property for ALL valid inputs) and existential tests (pytest confirms the
+property for THIS specific input on the Python mirror). If the \fstar{} spec
+and the Python mirror ever diverge, the bridge catches it.
+
+\subsection{Incorrectness Lemma Coverage}
+
+Following Gardner's incorrectness logic~\cite{gardner2026incorrectness},
+\texttt{TetherLemmas.fst} contains 10 core lemmas (L1--L10) that prove
+rejection is \emph{necessary} under specific attack conditions, and
+\texttt{ProxyLemmas.fst} adds 5 proxy lemmas (L\textsubscript{P1}--L\textsubscript{P5})
+that prove the inference proxy classification is tight.
+
+\begin{table}[t]
+\caption{Incorrectness lemmas: each proves that a specific attack class is necessarily rejected.}
+\label{tab:lemmas}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Lemma} & \textbf{Attack condition} & \textbf{Rejection} \\
+\midrule
+L1 & Identity with fabricated conclusion & P1 rejects \\
+L2 & Identity with multiple premises & P1 rejects \\
+L3 & ToolResult with untrusted source & P1 rejects \\
+L4 & Empty inference chain & P1 rejects \\
+L5 & Derivation with empty rule id & P1 rejects \\
+L6 & Derivation with novel tokens (LBAC IFC) & P1 rejects \\
+L7 & Aggregation with novel tokens (LBAC IFC) & P1 rejects \\
+L8 & Contradiction with existing memory & P2 rejects \\
+L9 & Unverified observation provenance & P3 rejects \\
+L10 & Agent-generated observation provenance & P3 rejects \\
+\midrule
+L\textsubscript{P1} & Verbatim tool relay & Classified Identity \\
+L\textsubscript{P2} & Novel content (hallucination) & Not classified Identity \\
+L\textsubscript{P3} & No evidence (system/assistant only) & Classified Derivation \\
+L\textsubscript{P4} & Unmatched tool provenance & P3 rejects \\
+L\textsubscript{P5} & Matched tool provenance & P3 accepts \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+L5--L7 are particularly significant: even the weakest inference rules
+(Derivation and Aggregation) reject fabricated content. L5 proves that
+evidence-free derivations are rejected. L6 and L7 prove that novel tokens
+(adopting the LBAC~\cite{zhou2026lbac} information flow control principle)
+are rejected in both Derivation and Aggregation, closing the gap where
+\texttt{classify\_rule} would route short fabrications to Aggregation.
+An agent cannot bypass the verification gate by choosing the least
+restrictive rule---every rule enforces content containment. The proxy
+lemmas complement this: L\textsubscript{P2}, L\textsubscript{P4}, and L\textsubscript{P5} prove that the automatic
+classifier never misidentifies hallucinations as verbatim relay, and
+L\textsubscript{P3} proves that evidence-free conclusions are always
+flagged as derivations regardless of their content.
+
+
+%%% ================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Limitations}
+
+\paragraph{(a) The Derivation rule is the weakest but not unguarded.}
+The weakest inference rule, \texttt{RuleDerivation}, requires a non-empty
+domain rule identifier AND token containment---every token in the conclusion
+must appear in at least one premise. This adopts the LBAC
+IFC~\cite{zhou2026lbac} principle: untrusted synthesis cannot introduce
+information not present in the observations without passing through a
+trusted boundary (tool call or user input). Aggregation applies the same
+token containment, closing the gap where \texttt{classify\_rule} would
+route short fabrications to Aggregation (bypassing Derivation). Incorrectness
+lemmas L5, L6, and L7 prove that evidence-free claims, novel-token
+derivations, and novel-token aggregations are all rejected. Strict
+deployments can further extend Tether with a \emph{domain rule catalog}
+providing pre/postconditions per rule.
+
+\paragraph{(b) Specification correctness.}
+Formal verification proves that code meets its specification. It does not
+prove that the specification captures the intended behavior. If the poison
+detection patterns miss a novel attack vector, the verifier will accept it
+as benign. This is a fundamental limitation of all formal
+methods~\cite{rand2026verified}. The normalization test bridge (Section~\ref{sec:evaluation})
+partially mitigates this.
+
+\paragraph{(c) Concurrency.}
+The current Pulse specification enforces single-writer semantics per memory
+region within a session (P6 ownership). Multi-session concurrent access to
+shared storage is handled by the backing database (PostgreSQL in the
+deployed configuration) rather than by the Tether verification layer. A
+formal concurrency model using Pulse's ghost state and invariants is future
+work.
+
+\paragraph{(d) KaRaMeL extraction.}
+The current implementation uses a Python mirror of the \fstar{}
+specification. The production target is KaRaMeL
+extraction~\cite{protzenko2017verified}: the \fstar{}/Pulse specifications
+compile to C via the KaRaMeL compiler, producing a verified native library.
+This eliminates the mirror-consistency question entirely.
+
+\subsection{Comparison to the Dual LLM Pattern}
+
+LBAC/TypeGuard~\cite{zhou2026lbac} proposes a binary separation: a
+privileged LLM with tool access that never processes untrusted data, and a
+quarantined LLM that processes untrusted data but has no tool access.
+TACIT~\cite{odersky2026tacit} refines this with Scala~3 capture
+checking: \texttt{Classified[T]} wraps values so that functions
+processing classified data cannot leak them.
+
+Tether generalizes beyond the binary privileged/quarantined
+distinction with a five-level trust spectrum.
+Rather than classifying the \emph{agent} as privileged or quarantined,
+Tether classifies each \emph{inference step} on a continuous strength
+scale from Identity (strongest) through Derivation (weakest).
+This graduated model accommodates the reality that agent reasoning
+involves a mix of trust levels within a single session.
+
+\subsection{Separation Logic for Agent Memory}
+
+Tether makes a novel contribution by applying separation logic to AI
+agent persistent memory. Pulse---the separation logic layer of
+\fstar{}---provides the right formalism for this domain. The points-to
+assertion \texttt{region}~$\pointsto$~\texttt{v} models exclusive
+ownership of a memory region by an agent, directly encoding the Hermes
+memory architecture. The separating conjunction $\sepconj$ guarantees
+write isolation: \texttt{region\_a}~$\pointsto$~\texttt{v\_a}
+$\sepconj$ \texttt{region\_b}~$\pointsto$~\texttt{v\_b} proves that a
+write to \texttt{region\_a} cannot affect \texttt{region\_b}---the
+formal statement of the frame rule (part of P6 ownership).
+
+The \texttt{stt} (stateful) effect in Pulse sequences stateful
+operations with explicit pre- and post-conditions. Erased ghost state
+(\texttt{erased} types) tracks preconditions and invariants without
+runtime cost: the ownership proof exists at verification time but
+compiles away to zero overhead in the extracted code.
+
+
+%%% ================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+Tether demonstrates that formal verification of AI agent persistent memory
+is both tractable and deployable. By treating every memory write as a proof
+obligation---verified by \fstar{}/Pulse separation logic and Z3 SMT
+discharge---we prevent hallucination persistence loops at the formal methods
+level, not the heuristic level.
+
+We claim five contributions. First, Tether is the first application of
+separation logic to AI agent persistent memory: the points-to assertion
+models agent ownership, the separating conjunction guarantees write
+isolation, and the frame rule proves that skill persistence does not corrupt
+curated memory. Second, the verification strength spectrum provides five
+inference rule categories that give deployers a graduated trust model rather
+than binary privileged/quarantined separation. Third, incorrectness lemmas
+(10 core + 5 proxy) prove that rejection is necessary under attack
+conditions. Fourth, the inference proxy provides framework-agnostic
+observation capture at the model serving boundary, solving the observation
+loss problem that renders memory-hook-based verification vacuous. Fifth, the
+architecture is deployed on Red Hat OpenShift AI inside a three-layer
+sandboxing model---Kata kernel isolation, OpenShell application sandbox,
+and Tether content verification---empirically validated as
+complementary~\cite{osc2026layered}, extending RHOAI TrustyAI from
+model-level trust to agent-level memory groundedness.
+
+Tether complements rather than competes with the three concurrent
+verification approaches. Dafny-as-IL~\cite{li2025dafny} verifies generated
+code (compile-time). LBAC/TypeGuard~\cite{zhou2026lbac} encodes agent
+policies as Haskell types (compile-time). TACIT~\cite{odersky2026tacit}
+tracks capabilities via Scala~3 capture checking (compile-time). These
+three operate at the \emph{code layer}; Tether adds the \emph{content
+layer}---runtime verification of what the agent persists, the dimension
+that none of the three address. In the four-layer security model (kernel,
+application, code, content), Tether closes the bottom layer.
+
+Future work proceeds along four axes. First, KaRaMeL
+extraction~\cite{protzenko2017verified} will compile the \fstar{}/Pulse
+specifications to C, eliminating the Python mirror. Second, an extended
+domain rule catalog for the Derivation inference rule will reduce the
+weakest rule to a lookup against curated reasoning patterns. Third,
+multi-agent proofs with the Kagent (Red Hat) fleet will extend Surface~5
+using session types~\cite{gay2026session}. Fourth, we are investigating
+Tether as a compliance evidence generator for EU AI Act Article~9 (risk
+management), where proof certificates and OTel audit trails provide
+machine-readable evidence of verification.
+
+
+%%% ================================================================
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}
